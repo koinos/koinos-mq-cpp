@@ -89,7 +89,6 @@ hunter_add_package(Boost COMPONENTS test exception)
 hunter_add_package(rabbitmq-c)
 hunter_add_package(nlohmann_json)
 hunter_add_package(koinos_util)
-hunter_add_package(koinos_exception)
 hunter_add_package(koinos_log)
 hunter_add_package(koinos_types)
 
