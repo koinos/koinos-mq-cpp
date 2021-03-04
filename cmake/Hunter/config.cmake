@@ -7,20 +7,20 @@ hunter_config(Boost
 )
 
 hunter_config(koinos_util
-   URL "https://github.com/koinos/koinos-util-cpp/archive/a5f56e6cc68f150f5a126698c42764fbb04c8505.tar.gz"
-   SHA1 "deb309751ff754d62b2de7d1c6a726b19d82f372"
+   URL  "https://github.com/koinos/koinos-util-cpp/archive/43280d7adc1f033e42bb2e0d50bb39d31a2dbeaa.tar.gz"
+   SHA1 "5be977696aa13be3d87500b486cd9e6cef0f12a9"
 )
 
 hunter_config(koinos_log
-   URL  "https://github.com/koinos/koinos-log-cpp/archive/4ecb8399d05d1639c52a34845f55aa826f35d484.tar.gz"
-   SHA1 "1b11e2acadd4d37a483944096bed916ba579637d"
+   URL  "https://github.com/koinos/koinos-log-cpp/archive/5d2d7a185f068f76f80c2335773bfbacdbc3176e.tar.gz"
+   SHA1 "d3a58334b7ff3fc24933fad94921a57c3cd2369f"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_types
-   URL "https://github.com/koinos/koinos-types/archive/d8a9db91761d8aa84723f0b0b5b12e032fad9fa9.tar.gz"
-   SHA1 "3764a668d7e0f6c5876f522f11bdc39cbdbbba8b"
+   URL "https://github.com/koinos/koinos-util-cpp/archive/89164de74999fbc95562ccf524f01d95aa401937.tar.gz"
+   SHA1 "846eb8340edd72f4c280690a15fb3af1ee0b9bd7"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
@@ -31,4 +31,3 @@ hunter_config(rabbitmq-c
    CMAKE_ARGS
       ENABLE_SSL_SUPPORT=OFF
 )
-
