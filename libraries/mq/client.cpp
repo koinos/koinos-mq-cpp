@@ -47,7 +47,7 @@ struct client_impl
    error_code connect( const std::string& amqp_url );
 
    std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
-   std::future< std::string > broadcast( std::string content_type, std::string rpc_type, std::string payload );
+   void broadcast( std::string content_type, std::string rpc_type, std::string payload );
 
    guarded_promise_map                _promise_map;
    std::shared_ptr< message_broker >  _writer_broker;
@@ -77,10 +77,8 @@ std::future< std::string > client_impl::rpc( std::string content_type, std::stri
    return promise.get_future();
 }
 
-std::future< std::string > client_impl::broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client_impl::broadcast( std::string content_type, std::string rpc_type, std::string payload )
 {
-   auto promise = std::promise< std::string >();
-   return promise.get_future();
 }
 
 } // detail
@@ -95,9 +93,9 @@ std::future< std::string > client::rpc( std::string content_type, std::string rp
    return _my->rpc( content_type, rpc_type, payload );
 }
 
-std::future< std::string > client::broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client::broadcast( std::string content_type, std::string rpc_type, std::string payload )
 {
-   return _my->broadcast( content_type, rpc_type, payload );
+   _my->broadcast( content_type, rpc_type, payload );
 }
 
 } // koinos::mq

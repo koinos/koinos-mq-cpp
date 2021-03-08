@@ -16,7 +16,7 @@ public:
    error_code connect( const std::string& amqp_url );
 
    std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
-   std::future< std::string > broadcast( std::string content_type, std::string rpc_type, std::string payload );
+   void broadcast( std::string content_type, std::string rpc_type, std::string payload );
 private:
    std::unique_ptr< detail::client_impl > _my;
 };
