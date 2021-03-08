@@ -4,6 +4,7 @@ find_package(koinos_util CONFIG REQUIRED)
 
 file(GLOB HEADERS "include/koinos/mq/*.hpp")
 add_library(koinos_mq
+            client.cpp
             request_handler.cpp
             message_broker.cpp
             ${HEADERS})
