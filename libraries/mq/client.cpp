@@ -7,41 +7,6 @@ namespace koinos::mq {
 
 namespace detail {
 
-template < class K, class V, class Compare = std::less< K >, class Allocator = std::allocator< std::pair< const K, V > > >
-class guarded_map
-{
-private:
-   std::map< K, V, Compare, Allocator > _map;
-   std::mutex                           _mutex;
-
-public:
-   void set( K key, V&& value )
-   {
-      std::lock_guard< std::mutex > lock( _mutex );
-      _map[ key ] = std::forward< V >( value );
-   }
-
-   V& get( K key )
-   {
-      std::lock_guard< std::mutex > lock( _mutex );
-      return _map[ key ];
-   }
-
-   void erase( K key )
-   {
-      std::lock_guard< std::mutex > lock( _mutex );
-      _map.erase( key );
-   }
-
-   bool empty()
-   {
-      std::lock_guard< std::mutex > lock( _mutex );
-      return _map.empty();
-   }
-};
-
-using guarded_promise_map = guarded_map< std::string, std::promise< std::string > >;
-
 struct client_impl
 {
    error_code connect( const std::string& amqp_url );
@@ -49,11 +14,13 @@ struct client_impl
    std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
    void broadcast( std::string content_type, std::string rpc_type, std::string payload );
 
-   guarded_promise_map                _promise_map;
-   std::shared_ptr< message_broker >  _writer_broker;
+   std::map< std::string, std::promise< std::string > > _promise_map;
+   std::mutex                                           _promise_map_mutex;
 
-   std::unique_ptr< std::thread >     _reader_thread;
-   std::shared_ptr< message_broker >  _reader_broker;
+   std::shared_ptr< message_broker >                    _writer_broker;
+
+   std::unique_ptr< std::thread >                       _reader_thread;
+   std::shared_ptr< message_broker >                    _reader_broker;
 };
 
 error_code client_impl::connect( const std::string& amqp_url )
