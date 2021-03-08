@@ -1,5 +1,8 @@
 #include <koinos/mq/client.hpp>
 
+#include <map>
+#include <mutex>
+
 namespace koinos::mq {
 
 namespace detail {
@@ -8,11 +11,16 @@ struct client_impl
 {
    error_code connect( const std::string& amqp_url );
 
-   std::future< std::string > send_rpc( std::string content_type, std::string rpc_type, std::string payload );
-   std::future< std::string > send_broadcast( std::string content_type, std::string rpc_type, std::string payload );
+   std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
+   void broadcast( std::string content_type, std::string rpc_type, std::string payload );
 
-   std::shared_ptr< message_broker > _reader_broker;
-   std::shared_ptr< message_broker > _writer_broker;
+   std::map< std::string, std::promise< std::string > > _promise_map;
+   std::mutex                                           _promise_map_mutex;
+
+   std::shared_ptr< message_broker >                    _writer_broker;
+
+   std::unique_ptr< std::thread >                       _reader_thread;
+   std::shared_ptr< message_broker >                    _reader_broker;
 };
 
 error_code client_impl::connect( const std::string& amqp_url )
@@ -30,16 +38,14 @@ error_code client_impl::connect( const std::string& amqp_url )
    return error_code::success;
 }
 
-std::future< std::string > client_impl::send_rpc( std::string content_type, std::string rpc_type, std::string payload )
+std::future< std::string > client_impl::rpc( std::string content_type, std::string rpc_type, std::string payload )
 {
    auto promise = std::promise< std::string >();
    return promise.get_future();
 }
 
-std::future< std::string > client_impl::send_broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client_impl::broadcast( std::string content_type, std::string rpc_type, std::string payload )
 {
-   auto promise = std::promise< std::string >();
-   return promise.get_future();
 }
 
 } // detail
@@ -49,14 +55,14 @@ error_code client::connect( const std::string& amqp_url )
    return _my->connect( amqp_url );
 }
 
-std::future< std::string > client::send_rpc( std::string content_type, std::string rpc_type, std::string payload )
+std::future< std::string > client::rpc( std::string content_type, std::string rpc_type, std::string payload )
 {
-   return _my->send_rpc( content_type, rpc_type, payload );
+   return _my->rpc( content_type, rpc_type, payload );
 }
 
-std::future< std::string > client::send_broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client::broadcast( std::string content_type, std::string rpc_type, std::string payload )
 {
-   return _my->send_broadcast( content_type, rpc_type, payload );
+   _my->broadcast( content_type, rpc_type, payload );
 }
 
 } // koinos::mq
