@@ -12,6 +12,7 @@ namespace detail {
 constexpr const char* broadcast_exchange    = "koinos_event";
 constexpr const char* rpc_exchange          = "koinos_rpc";
 constexpr const char* rpc_reply_to_exchange = "koinos_rpc_reply";
+constexpr const char* rpc_routing_prefix    = "koinos_rpc_";
 
 std::string random_string( int32_t len )
 {
@@ -207,12 +208,11 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
 {
    auto promise = std::promise< std::string >();
    message msg;
-   msg.exchange = "koinos_rpc";
-   msg.routing_key = "koinos_rpc_" + rpc_type;
+   msg.exchange = rpc_exchange;
+   msg.routing_key = rpc_routing_prefix + rpc_type;
    msg.content_type = content_type;
    msg.data = payload;
-   // TODO: Get reply_to from reply queue name
-   // msg.reply_to =
+   msg.reply_to = _queue_name;
    msg.correlation_id = random_string( 32 );
 
    auto err = _writer_broker->publish( msg );
@@ -262,7 +262,7 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
 void client_impl::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
 {
    auto err = _writer_broker->publish( message {
-      .exchange     = "koinos_event",
+      .exchange     = broadcast_exchange,
       .routing_key  = routing_key,
       .content_type = content_type,
       .data         = payload
