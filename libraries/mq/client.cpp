@@ -199,6 +199,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
          if ( it != _promise_map.end() )
          {
             it->second.set_value( std::move( msg->data ) );
+            _promise_map.erase( it );
          }
       }
    }
