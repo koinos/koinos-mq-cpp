@@ -25,6 +25,13 @@ hunter_config(koinos_types
       BUILD_TESTS=OFF
 )
 
+hunter_config(koinos_exception
+   URL  "https://github.com/koinos/koinos-exception-cpp/archive/373937ced4b890bc6a8dbdad6452560860a38f5e.tar.gz"
+   SHA1 "1dd40d3e733d7a9220adbe64e47e40c0b1079062"
+   CMAKE_ARGS
+      BUILD_TESTS=OFF
+)
+
 hunter_config(rabbitmq-c
    URL "https://github.com/alanxz/rabbitmq-c/archive/b8e5f43b082c5399bf1ee723c3fd3c19cecd843e.tar.gz"
    SHA1 "35d4ce3e4f0a5348de64bbed25c6e1df72da2594"

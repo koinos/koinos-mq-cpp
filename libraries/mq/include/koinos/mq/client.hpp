@@ -2,21 +2,31 @@
 
 #include <koinos/mq/message_broker.hpp>
 
+#include <koinos/exception.hpp>
+
 #include <future>
 #include <memory>
 #include <string>
 
 namespace koinos::mq {
 
-namespace detail { struct client_impl; }
+namespace detail { class client_impl; }
+
+KOINOS_DECLARE_EXCEPTION( client_not_running );
+KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
+KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
+KOINOS_DECLARE_EXCEPTION( timeout_error );
 
 class client final
 {
 public:
+   client();
+   ~client();
+
    error_code connect( const std::string& amqp_url );
 
-   std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
-   void broadcast( std::string content_type, std::string rpc_type, std::string payload );
+   std::shared_future< std::string > rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms = 5000 );
+   void broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload );
 private:
    std::unique_ptr< detail::client_impl > _my;
 };
