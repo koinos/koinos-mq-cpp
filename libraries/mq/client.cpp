@@ -66,8 +66,7 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
    auto err = _writer_broker->publish( msg );
    if ( err != error_code::success )
    {
-      // TODO: Set exception
-      // promise.set_exception()
+      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending rpc message" ) ) );
       return promise.get_future();
    }
 
@@ -78,8 +77,7 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
    if ( !empl_res.second )
    {
       promise = std::promise< std::string >();
-      // TODO: Set exception
-      // promise.set_exception()
+      promise.set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
       return promise.get_future();
    }
 
@@ -96,8 +94,7 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
                auto itr = _promise_map.find( *msg.correlation_id );
                if ( itr != _promise_map.end() )
                {
-                  // TODO: Set exception
-                  //itr->second.set_exception()
+                  itr->second.set_exception( std::make_exception_ptr( timeout_error( "Request timeout" ) ) );
                   _promise_map.erase( itr );
                }
             }
@@ -119,10 +116,7 @@ void client_impl::broadcast( const std::string& content_type, const std::string&
       .data         = payload
    } );
 
-   if ( err != error_code::success )
-   {
-      // TODO: Throw
-   }
+   KOINOS_ASSERT( err == error_code::success, amqp_publish_error, "Error broadcasting message" );
 }
 
 } // detail

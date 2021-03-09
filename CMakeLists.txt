@@ -91,6 +91,7 @@ hunter_add_package(nlohmann_json)
 hunter_add_package(koinos_util)
 hunter_add_package(koinos_log)
 hunter_add_package(koinos_types)
+hunter_add_package(koinos_exception)
 
 add_subdirectory(libraries)
 

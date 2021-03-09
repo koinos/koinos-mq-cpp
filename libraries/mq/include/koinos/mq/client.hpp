@@ -2,11 +2,17 @@
 
 #include <koinos/mq/message_broker.hpp>
 
+#include <koinos/exception.hpp>
+
 #include <future>
 #include <memory>
 #include <string>
 
 namespace koinos::mq {
+
+KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
+KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
+KOINOS_DECLARE_EXCEPTION( timeout_error );
 
 namespace detail { struct client_impl; }
 
