@@ -8,11 +8,14 @@
 
 namespace koinos::mq {
 
-namespace detail { struct client_impl; }
+namespace detail { class client_impl; }
 
 class client final
 {
 public:
+   client();
+   ~client();
+
    error_code connect( const std::string& amqp_url );
 
    std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
