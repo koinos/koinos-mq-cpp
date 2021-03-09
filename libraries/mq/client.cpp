@@ -35,7 +35,7 @@ public:
 
    error_code connect( const std::string& amqp_url );
 
-   std::future< std::string > rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms );
+   std::shared_future< std::string > rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms );
    void broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload );
 
 private:
@@ -205,7 +205,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
    }
 }
 
-std::future< std::string > client_impl::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
+std::shared_future< std::string > client_impl::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
@@ -225,22 +225,26 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
       return promise.get_future();
    }
 
-
-   std::lock_guard< std::mutex > guard( _promise_map_mutex );
-   auto empl_res = _promise_map.emplace( *msg.correlation_id, std::move(promise) );
-
-   if ( !empl_res.second )
+   std::shared_future< std::string > future_val;
    {
-      promise = std::promise< std::string >();
-      promise.set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
-      return promise.get_future();
+      std::lock_guard< std::mutex > guard( _promise_map_mutex );
+      auto empl_res = _promise_map.emplace( *msg.correlation_id, std::move(promise) );
+
+      if ( !empl_res.second )
+      {
+         promise = std::promise< std::string >();
+         promise.set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
+         return promise.get_future();
+      }
+
+      future_val = empl_res.first->second.get_future();
    }
 
    if ( timeout_ms > 0 )
    {
       std::async(
          std::launch::async,
-         [&](std::future< std::string > future)
+         [&]( std::shared_future< std::string > future )
          {
             auto status = future.wait_for( std::chrono::milliseconds( timeout_ms ) );
             if ( status != std::future_status::ready )
@@ -254,12 +258,12 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
                }
             }
          },
-         empl_res.first->second.get_future()
+         future_val
       );
    }
 
 
-   return empl_res.first->second.get_future();
+   return future_val;
 }
 
 void client_impl::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
@@ -286,7 +290,7 @@ error_code client::connect( const std::string& amqp_url )
    return _my->connect( amqp_url );
 }
 
-std::future< std::string > client::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
+std::shared_future< std::string > client::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
 {
    return _my->rpc( content_type, rpc_type, payload, timeout_ms );
 }
