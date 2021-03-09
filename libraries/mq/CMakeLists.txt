@@ -1,7 +1,3 @@
-find_package(rabbitmq-c CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
-find_package(koinos_util CONFIG REQUIRED)
-
 file(GLOB HEADERS "include/koinos/mq/*.hpp")
 add_library(koinos_mq
             client.cpp
