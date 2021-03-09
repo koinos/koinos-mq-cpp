@@ -207,6 +207,8 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
 std::future< std::string > client_impl::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
 {
+   KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
+
    auto promise = std::promise< std::string >();
    message msg;
    msg.exchange = rpc_exchange;
@@ -262,6 +264,8 @@ std::future< std::string > client_impl::rpc( const std::string& content_type, co
 
 void client_impl::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
 {
+   KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
+
    auto err = _writer_broker->publish( message {
       .exchange     = broadcast_exchange,
       .routing_key  = routing_key,

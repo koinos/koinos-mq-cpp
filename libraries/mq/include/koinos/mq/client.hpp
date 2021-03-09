@@ -12,6 +12,7 @@ namespace koinos::mq {
 
 namespace detail { class client_impl; }
 
+KOINOS_DECLARE_EXCEPTION( client_not_running );
 KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
 KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
 KOINOS_DECLARE_EXCEPTION( timeout_error );
