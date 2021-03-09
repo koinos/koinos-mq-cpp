@@ -7,12 +7,25 @@ namespace koinos::mq {
 
 namespace detail {
 
+std::string random_string( int32_t len )
+{
+   std::string s;
+   s.resize( len );
+
+   for( int32_t i = 0; i < len; i++ )
+   {
+      s[i] = rand() / 26 + 65;
+   }
+
+   return s;
+}
+
 struct client_impl
 {
    error_code connect( const std::string& amqp_url );
 
-   std::future< std::string > rpc( std::string content_type, std::string rpc_type, std::string payload );
-   void broadcast( std::string content_type, std::string rpc_type, std::string payload );
+   std::future< std::string > rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms );
+   void broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
@@ -38,14 +51,78 @@ error_code client_impl::connect( const std::string& amqp_url )
    return error_code::success;
 }
 
-std::future< std::string > client_impl::rpc( std::string content_type, std::string rpc_type, std::string payload )
+std::future< std::string > client_impl::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
 {
    auto promise = std::promise< std::string >();
-   return promise.get_future();
+   message msg;
+   msg.exchange = "koinos_rpc";
+   msg.routing_key = "koinos_rpc_" + rpc_type;
+   msg.content_type = content_type;
+   msg.data = payload;
+   // TODO: Get reply_to from reply queue name
+   // msg.reply_to =
+   msg.correlation_id = random_string( 32 );
+
+   auto err = _writer_broker->publish( msg );
+   if ( err != error_code::success )
+   {
+      // TODO: Set exception
+      // promise.set_exception()
+      return promise.get_future();
+   }
+
+
+   std::lock_guard< std::mutex > guard( _promise_map_mutex );
+   auto empl_res = _promise_map.emplace( *msg.correlation_id, std::move(promise) );
+
+   if ( !empl_res.second )
+   {
+      promise = std::promise< std::string >();
+      // TODO: Set exception
+      // promise.set_exception()
+      return promise.get_future();
+   }
+
+   if ( timeout_ms > 0 )
+   {
+      std::async(
+         std::launch::async,
+         [&](std::future< std::string > future)
+         {
+            auto status = future.wait_for( std::chrono::milliseconds( timeout_ms ) );
+            if ( status != std::future_status::ready )
+            {
+               std::lock_guard< std::mutex > guard( _promise_map_mutex );
+               auto itr = _promise_map.find( *msg.correlation_id );
+               if ( itr != _promise_map.end() )
+               {
+                  // TODO: Set exception
+                  //itr->second.set_exception()
+                  _promise_map.erase( itr );
+               }
+            }
+         },
+         empl_res.first->second.get_future()
+      );
+   }
+
+
+   return empl_res.first->second.get_future();
 }
 
-void client_impl::broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client_impl::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
 {
+   auto err = _writer_broker->publish( message {
+      .exchange     = "koinos_event",
+      .routing_key  = routing_key,
+      .content_type = content_type,
+      .data         = payload
+   } );
+
+   if ( err != error_code::success )
+   {
+      // TODO: Throw
+   }
 }
 
 } // detail
@@ -55,14 +132,14 @@ error_code client::connect( const std::string& amqp_url )
    return _my->connect( amqp_url );
 }
 
-std::future< std::string > client::rpc( std::string content_type, std::string rpc_type, std::string payload )
+std::future< std::string > client::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
 {
-   return _my->rpc( content_type, rpc_type, payload );
+   return _my->rpc( content_type, rpc_type, payload, timeout_ms );
 }
 
-void client::broadcast( std::string content_type, std::string rpc_type, std::string payload )
+void client::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
 {
-   _my->broadcast( content_type, rpc_type, payload );
+   _my->broadcast( content_type, routing_key, payload );
 }
 
 } // koinos::mq
