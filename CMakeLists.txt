@@ -87,12 +87,18 @@ endif()
 
 hunter_add_package(Boost COMPONENTS test exception program_options log)
 hunter_add_package(rabbitmq-c)
+hunter_add_package(nlohmann_json)
 hunter_add_package(koinos_util)
 hunter_add_package(koinos_log)
+hunter_add_package(koinos_exception)
+hunter_add_package(koinos_types)
 
 find_package(rabbitmq-c CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(koinos_util CONFIG REQUIRED)
 find_package(koinos_log CONFIG REQUIRED)
+find_package(koinos_exception CONFIG REQUIRED)
+find_package(koinos_types CONFIG REQUIRED)
 find_package(Boost CONFIG REQUIRED COMPONENTS program_options log log_setup exception)
 
 add_subdirectory(libraries)

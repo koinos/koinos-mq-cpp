@@ -5,7 +5,7 @@ add_library(koinos_mq
             message_broker.cpp
             ${HEADERS})
 
-target_link_libraries(koinos_mq PUBLIC Koinos::util rabbitmq::rabbitmq-static)
+target_link_libraries(koinos_mq PUBLIC Koinos::util Koinos::exception rabbitmq::rabbitmq-static)
 target_include_directories(koinos_mq PUBLIC
    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
    $<INSTALL_INTERFACE:include>
@@ -35,4 +35,3 @@ install(
    NAMESPACE Koinos::
    DESTINATION ${KOINOS_LIB_CONFIG_INSTALL_DIR}
 )
-
