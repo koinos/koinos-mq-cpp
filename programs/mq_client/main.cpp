@@ -14,6 +14,7 @@ using namespace koinos;
 #define CONTENT_TYPE_OPTION "content-type"
 #define ROUTING_KEY_OPTION  "routing-key"
 #define PAYLOAD_OPTION      "payload"
+#define TIMEOUT_OPTION      "timeout"
 
 int main( int argc, char** argv )
 {
@@ -24,6 +25,7 @@ int main( int argc, char** argv )
       ( BROADCAST_OPTION    ",b", program_options::value< bool        >()->default_value( false ), "broadcast mode" )
       ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/json" ), "content type of the message" )
       ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
+      ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 5000 ), "timeout of the message" )
       ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
       ;
 
@@ -41,6 +43,7 @@ int main( int argc, char** argv )
    std::string content_type = vm[ CONTENT_TYPE_OPTION ].as< std::string >();
    std::string routing_key  = vm[ ROUTING_KEY_OPTION ].as< std::string >();
    std::string payload      = vm[ PAYLOAD_OPTION ].as< std::string >();
+   uint64_t timeout         = vm[ TIMEOUT_OPTION ].as< uint64_t >();
 
    mq::client c;
 
@@ -55,7 +58,7 @@ int main( int argc, char** argv )
       }
       else
       {
-         auto r = c.rpc( content_type, routing_key, payload );
+         auto r = c.rpc( content_type, routing_key, payload, timeout );
          std::cout << r.get() << std::endl;
       }
    }
