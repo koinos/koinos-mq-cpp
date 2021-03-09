@@ -5,50 +5,64 @@
 
 #include <koinos/mq/client.hpp>
 
-using namespace std;
 using namespace boost;
 using namespace koinos;
 
+#define HELP_OPTION         "help"
+#define AMQP_OPTION         "amqp"
+#define BROADCAST_OPTION    "broadcast"
+#define CONTENT_TYPE_OPTION "content-type"
+#define ROUTING_KEY_OPTION  "routing-key"
+#define PAYLOAD_OPTION      "payload"
+
 int main( int argc, char** argv )
 {
-   program_options::options_description desc( "Koinos MQ Client options");
+   program_options::options_description desc( "Koinos MQ Client options" );
    desc.add_options()
-      ("help,h", "print usage message")
-      ("amqp,a", program_options::value< string >()->default_value( "amqp://guest:guest@localhost:5672/" ), "amqp url")
-      ("broadcast,b", program_options::value< bool >()->default_value( false ), "broadcast mode")
-      ("content-type,c", program_options::value< string >()->default_value( "application/json" ), "content type of the message")
-      ("routing-key,r", program_options::value< string >()->default_value( "" ), "routing key of the message")
-      ("payload,p", program_options::value< string >()->default_value( "" ), "payload of the message")
+      ( HELP_OPTION         ",h", "print usage message" )
+      ( AMQP_OPTION         ",a", program_options::value< std::string >()->default_value( "amqp://guest:guest@localhost:5672/" ), "amqp url" )
+      ( BROADCAST_OPTION    ",b", program_options::value< bool        >()->default_value( false ), "broadcast mode" )
+      ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/json" ), "content type of the message" )
+      ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
+      ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
       ;
 
    program_options::variables_map vm;
    program_options::store( program_options::parse_command_line( argc, argv, desc ), vm );
 
-   if ( vm.count( "help" ) )
+   if ( vm.count( HELP_OPTION ) )
    {
-      cout << desc << endl;
+      std::cout << desc << std::endl;
       return EXIT_SUCCESS;
    }
 
-   string amqp_url     = vm[ "amqp" ].as< string >();
-   bool broadcast_mode = vm[ "broadcast" ].as< bool >();
-   string content_type = vm[ "content-type" ].as< string >();
-   string routing_key  = vm[ "routing-key" ].as< string >();
-   string payload      = vm[ "payload" ].as< string >();
+   std::string amqp_url     = vm[ AMQP_OPTION ].as< std::string >();
+   bool broadcast_mode      = vm[ BROADCAST_OPTION ].as< bool >();
+   std::string content_type = vm[ CONTENT_TYPE_OPTION ].as< std::string >();
+   std::string routing_key  = vm[ ROUTING_KEY_OPTION ].as< std::string >();
+   std::string payload      = vm[ PAYLOAD_OPTION ].as< std::string >();
 
    mq::client c;
 
    if( c.connect( amqp_url ) != mq::error_code::success )
       return EXIT_FAILURE;
 
-   if ( broadcast_mode )
+   try
    {
-      c.broadcast( content_type, routing_key, payload );
+      if ( broadcast_mode )
+      {
+         c.broadcast( content_type, routing_key, payload );
+      }
+      else
+      {
+         auto r = c.rpc( content_type, routing_key, payload );
+         std::cout << r.get() << std::endl;
+      }
    }
-   else
+   catch ( const std::exception& e )
    {
-      auto r = c.rpc( content_type, routing_key, payload );
-      cout << r.get() << endl;
+      std::cerr << e.what() << std::endl;
+      return EXIT_FAILURE;
    }
 
    return EXIT_SUCCESS;
