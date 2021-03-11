@@ -54,11 +54,11 @@ int main( int argc, char** argv )
    {
       if ( broadcast_mode )
       {
-         c.broadcast( content_type, routing_key, payload );
+         c.broadcast( routing_key, payload, content_type );
       }
       else
       {
-         auto r = c.rpc( content_type, routing_key, payload, timeout );
+         auto r = c.rpc( routing_key, payload, content_type, timeout );
          std::cout << r.get() << std::endl;
       }
    }
