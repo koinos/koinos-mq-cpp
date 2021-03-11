@@ -63,9 +63,7 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
-   _running = false;
-   if ( _reader_thread )
-      _reader_thread->join();
+   disconnect();
 }
 
 error_code client_impl::connect( const std::string& amqp_url )
@@ -99,6 +97,11 @@ error_code client_impl::connect( const std::string& amqp_url )
 
 void client_impl::disconnect()
 {
+   _running = false;
+
+   if ( _reader_thread )
+      _reader_thread->join();
+
    if ( _writer_broker->is_connected() )
       _writer_broker->disconnect();
 
