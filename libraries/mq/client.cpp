@@ -34,9 +34,12 @@ public:
    ~client_impl();
 
    error_code connect( const std::string& amqp_url );
+   void disconnect();
 
-   std::shared_future< std::string > rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms );
-   void broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload );
+   bool is_connected() const;
+
+   std::shared_future< std::string > rpc( const std::string& rpc_type, const std::string& payload, const std::string& content_type, int64_t timeout_ms );
+   void broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type );
 
 private:
    error_code prepare();
@@ -50,7 +53,8 @@ private:
    std::unique_ptr< std::thread >                       _reader_thread;
    std::shared_ptr< message_broker >                    _reader_broker;
    std::string                                          _queue_name;
-   std::atomic< bool >                                  _running = true;
+   std::atomic< bool >                                  _running   = true;
+   bool                                                 _connected = false;
 };
 
 client_impl::client_impl() :
@@ -59,9 +63,7 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
-   _running = false;
-   if ( _reader_thread )
-      _reader_thread->join();
+   disconnect();
 }
 
 error_code client_impl::connect( const std::string& amqp_url )
@@ -78,14 +80,40 @@ error_code client_impl::connect( const std::string& amqp_url )
 
    ec = prepare();
    if ( ec != error_code::success )
+   {
+      disconnect();
       return ec;
+   }
 
    _reader_thread = std::make_unique< std::thread >( [&]()
    {
       consumer( _reader_broker );
    } );
 
+   _connected = true;
+
    return error_code::success;
+}
+
+void client_impl::disconnect()
+{
+   _running = false;
+
+   if ( _reader_thread )
+      _reader_thread->join();
+
+   if ( _writer_broker->is_connected() )
+      _writer_broker->disconnect();
+
+   if ( _reader_broker->is_connected() )
+      _reader_broker->disconnect();
+
+   _connected = false;
+}
+
+bool client_impl::is_connected() const
+{
+   return _connected;
 }
 
 error_code client_impl::prepare()
@@ -205,7 +233,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
    }
 }
 
-std::shared_future< std::string > client_impl::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
+std::shared_future< std::string > client_impl::rpc( const std::string& rpc_type, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
@@ -266,7 +294,7 @@ std::shared_future< std::string > client_impl::rpc( const std::string& content_t
    return future_val;
 }
 
-void client_impl::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
+void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
@@ -298,6 +326,16 @@ std::shared_future< std::string > client::rpc( const std::string& content_type, 
 void client::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
 {
    _my->broadcast( content_type, routing_key, payload );
+}
+
+bool client::is_connected() const
+{
+   return _my->is_connected();
+}
+
+void client::disconnect()
+{
+   _my->disconnect();
 }
 
 } // koinos::mq
