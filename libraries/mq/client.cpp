@@ -4,6 +4,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <random>
 
 namespace koinos::mq {
 
@@ -13,19 +14,6 @@ constexpr const char* broadcast_exchange    = "koinos_event";
 constexpr const char* rpc_exchange          = "koinos_rpc";
 constexpr const char* rpc_reply_to_exchange = "koinos_rpc_reply";
 constexpr const char* rpc_routing_prefix    = "koinos_rpc_";
-
-std::string random_string( int32_t len )
-{
-   std::string s;
-   s.resize( len );
-
-   for( int32_t i = 0; i < len; i++ )
-   {
-      s[i] = rand() / 26 + 65;
-   }
-
-   return s;
-}
 
 class client_impl final
 {
@@ -44,6 +32,7 @@ public:
 private:
    error_code prepare();
    void consumer( std::shared_ptr< message_broker > broker );
+   std::string random_alphanumeric( std::size_t len );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
@@ -55,15 +44,35 @@ private:
    std::string                                          _queue_name;
    std::atomic< bool >                                  _running   = true;
    bool                                                 _connected = false;
+
+   std::mt19937                                         _random_generator;
 };
 
 client_impl::client_impl() :
    _writer_broker( std::make_unique< message_broker >() ),
-   _reader_broker( std::make_unique< message_broker >() ) {}
+   _reader_broker( std::make_unique< message_broker >() ),
+   _random_generator( std::random_device()() ) {}
 
 client_impl::~client_impl()
 {
    disconnect();
+}
+
+std::string client_impl::random_alphanumeric( std::size_t len )
+{
+   auto random_char = [this]() -> char
+   {
+      constexpr char charset[] =
+         "0123456789"
+         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+         "abcdefghijklmnopqrstuvwxyz";
+      constexpr std::size_t max_index = sizeof( charset ) - 1;
+      std::uniform_int_distribution<> distribution( 0, max_index );
+      return charset[ distribution( this->_random_generator ) % max_index ];
+   };
+   std::string str( len, 0 );
+   std::generate_n( str.begin(), len, random_char );
+   return str;
 }
 
 error_code client_impl::connect( const std::string& amqp_url )
@@ -244,7 +253,7 @@ std::shared_future< std::string > client_impl::rpc( const std::string& rpc_type,
    msg.content_type = content_type;
    msg.data = payload;
    msg.reply_to = _queue_name;
-   msg.correlation_id = random_string( 32 );
+   msg.correlation_id = random_alphanumeric( 32 );
 
    auto err = _writer_broker->publish( msg );
    if ( err != error_code::success )
