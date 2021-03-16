@@ -169,8 +169,8 @@ error_code client_impl::prepare()
       "",
       false, // Passive
       false, // Durable
-      true,  // Exclusive
-      false  // Internal
+      false, // Exclusive
+      true   // Auto-deleted
    );
 
    if ( queue_res.first != error_code::success )
