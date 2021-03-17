@@ -178,7 +178,7 @@ error_code client_impl::prepare()
       "",
       false, // Passive
       false, // Durable
-      false, // Exclusive
+      true,  // Exclusive
       true   // Auto-deleted
    );
 
