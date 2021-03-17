@@ -2,6 +2,8 @@
 
 #include <koinos/util.hpp>
 
+#include <boost/core/noncopyable.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -31,7 +33,7 @@ struct message
 
 namespace detail { struct message_broker_impl; }
 
-class message_broker final
+class message_broker final : private boost::noncopyable
 {
 private:
    std::unique_ptr< detail::message_broker_impl > _message_broker_impl;
