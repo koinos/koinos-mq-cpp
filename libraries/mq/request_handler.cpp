@@ -42,7 +42,7 @@ void consumer_thread_main( synced_msg_queue& input_queue, synced_msg_queue& outp
                      auto resp = f( msg->data );
                      if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
                      {
-                        reply->exchange       = exchange::rpc_reply;
+                        reply->exchange       = exchange::rpc;
                         reply->routing_key    = *msg->reply_to;
                         reply->content_type   = msg->content_type;
                         reply->correlation_id = *msg->correlation_id;

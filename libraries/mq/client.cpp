@@ -155,21 +155,6 @@ error_code client_impl::prepare()
       return ec;
    }
 
-   ec = _reader_broker->declare_exchange(
-      exchange::rpc_reply,   // Name
-      exchange_type::direct, // Type
-      false,                 // Passive
-      true,                  // Durable
-      false,                 // Auto-deleted
-      false                  // Internal
-   );
-
-   if ( ec != error_code::success )
-   {
-      LOG(error) << "error while declaring rpc reply-to exchange";
-      return ec;
-   }
-
    auto queue_res = _reader_broker->declare_queue(
       "",
       false, // Passive
@@ -186,7 +171,7 @@ error_code client_impl::prepare()
 
    _queue_name = queue_res.second;
 
-   ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc_reply, queue_res.second );
+   ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
       LOG(error) << "error while binding temporary queue";

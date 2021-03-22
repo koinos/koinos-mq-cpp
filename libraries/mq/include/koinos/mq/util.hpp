@@ -3,9 +3,8 @@
 namespace koinos::mq {
 
 namespace exchange {
-   constexpr char event[]     = "koinos_event";
-   constexpr char rpc[]       = "koinos_rpc";
-   constexpr char rpc_reply[] = "koinos_rpc_reply";
+   constexpr char event[]     = "koinos.event";
+   constexpr char rpc[]       = "koinos.rpc";
 } // exchange
 
 namespace exchange_type {
@@ -15,7 +14,7 @@ namespace exchange_type {
 
 inline std::string service_routing_key( const std::string& service )
 {
-   constexpr char rpc_prefix[] = "koinos_rpc_";
+   constexpr char rpc_prefix[] = "koinos.rpc.";
    return rpc_prefix + service;
 }
 
