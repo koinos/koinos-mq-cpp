@@ -52,7 +52,7 @@ public:
 
    error_code declare_exchange(
       const std::string& exchange,
-      const std::string& exchange_type = "direct",
+      const std::string& exchange_type,
       bool passive = false,
       bool durable = false,
       bool auto_delete = false,
@@ -70,8 +70,11 @@ public:
    error_code bind_queue(
       const std::string& queue,
       const std::string& exchange,
-      const std::string& binding_key
+      const std::string& binding_key,
+      bool autoack = true
    ) noexcept;
+
+   error_code ack_message( uint64_t delivery_tag ) noexcept;
 };
 
 } // koinos::mq

@@ -1,5 +1,5 @@
 #include <koinos/mq/request_handler.hpp>
-
+#include <koinos/mq/util.hpp>
 #include <koinos/util.hpp>
 
 #include <chrono>
@@ -42,11 +42,12 @@ void consumer_thread_main( synced_msg_queue& input_queue, synced_msg_queue& outp
                      auto resp = f( msg->data );
                      if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
                      {
-                        reply->exchange = "";
-                        reply->routing_key = *msg->reply_to;
-                        reply->content_type = msg->content_type;
+                        reply->exchange       = exchange::rpc_reply;
+                        reply->routing_key    = *msg->reply_to;
+                        reply->content_type   = msg->content_type;
                         reply->correlation_id = *msg->correlation_id;
-                        reply->data = resp;
+                        reply->data           = resp;
+                        reply->delivery_tag   = msg->delivery_tag;
 
                         output_queue.push_back( reply );
                      }
@@ -121,6 +122,22 @@ error_code request_handler::connect( const std::string& amqp_url )
    return error_code::success;
 }
 
+error_code request_handler::add_broadcast_handler(
+   const std::string& routing_key,
+   msg_handler_void_func func,
+   handler_verify_func vfunc )
+{
+   return add_msg_handler( exchange::event, routing_key, false, vfunc, func );
+}
+
+error_code request_handler::add_rpc_handler(
+   const std::string& service,
+   msg_handler_string_func func,
+   handler_verify_func vfunc )
+{
+   return add_msg_handler( exchange::rpc, service_routing_key( service ), true, vfunc, func );
+}
+
 error_code request_handler::add_msg_handler(
    const std::string& exchange,
    const std::string& routing_key,
@@ -137,7 +154,7 @@ error_code request_handler::add_msg_handler(
    {
       ec = _consumer_broker->declare_exchange(
          exchange,
-         competing_consumer ? "direct" : "topic",
+         competing_consumer ? exchange_type::direct : exchange_type::topic,
          false, // Passive
          true,  // Durable
          false, // Auto Delete
@@ -156,7 +173,7 @@ error_code request_handler::add_msg_handler(
       if ( queue_res.first != error_code::success )
          return queue_res.first;
 
-      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key );
+      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key, !competing_consumer );
       if ( ec != error_code::success )
          return ec;
 
@@ -232,7 +249,11 @@ void request_handler::publisher( std::shared_ptr< message_broker > broker )
 
       auto r = broker->publish( *m );
 
-      if ( r != error_code::success )
+      if ( r == error_code::success )
+      {
+         broker->ack_message( m->delivery_tag );
+      }
+      else
       {
          LOG(error) << "an error has occurred while publishing message";
       }

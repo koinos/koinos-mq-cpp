@@ -68,8 +68,11 @@ public:
    error_code bind_queue(
       const std::string& queue,
       const std::string& exchange,
-      const std::string& binding_key
+      const std::string& binding_key,
+      bool autoack
    ) noexcept;
+
+   error_code ack_message( uint64_t delivery_tag ) noexcept;
 };
 
 message_broker_impl::~message_broker_impl()
@@ -323,7 +326,8 @@ std::pair< error_code, std::string > message_broker_impl::declare_queue(
 error_code message_broker_impl::bind_queue(
    const std::string& queue,
    const std::string& exchange,
-   const std::string& binding_key ) noexcept
+   const std::string& binding_key,
+   bool autoack ) noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
 
@@ -350,7 +354,7 @@ error_code message_broker_impl::bind_queue(
       queue_bytes,
       amqp_empty_bytes,
       int( false ),
-      int( true ),
+      int( autoack ),
       int( false ),
       amqp_empty_table
    );
@@ -486,6 +490,18 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
    return result;
 }
 
+error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
+{
+   int res = amqp_basic_ack(
+      _connection,
+      _channel,
+      delivery_tag,
+      false
+   );
+
+   return res ? error_code::failure : error_code::success;
+}
+
 } // detail
 
 message_broker::message_broker()
@@ -539,14 +555,20 @@ std::pair< error_code, std::string > message_broker::declare_queue(
 error_code message_broker::bind_queue(
    const std::string& queue,
    const std::string& exchange,
-   const std::string& binding_key ) noexcept
+   const std::string& binding_key,
+   bool autoack ) noexcept
 {
-   return _message_broker_impl->bind_queue( queue, exchange, binding_key );
+   return _message_broker_impl->bind_queue( queue, exchange, binding_key, autoack );
 }
 
 std::pair< error_code, std::shared_ptr< message > > message_broker::consume() noexcept
 {
    return _message_broker_impl->consume();
+}
+
+error_code message_broker::ack_message( uint64_t delivery_tag ) noexcept
+{
+   return _message_broker_impl->ack_message( delivery_tag );
 }
 
 } // koinos::mq
