@@ -53,7 +53,9 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
    private:
       void consumer( std::shared_ptr< message_broker > broker );
-      void publisher( std::shared_ptr< message_broker > broker );
+      void publisher(
+         std::shared_ptr< message_broker > publisher_broker,
+         std::shared_ptr< message_broker > consumer_broker );
 
       error_code add_msg_handler(
          const std::string& exchange,

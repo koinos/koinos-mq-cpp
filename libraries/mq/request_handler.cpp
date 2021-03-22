@@ -79,7 +79,7 @@ void request_handler::start()
 
    _publisher_thread = std::make_unique< std::thread >( [&]()
    {
-      publisher( _publisher_broker );
+      publisher( _publisher_broker, _consumer_broker );
    } );
 
    std::size_t num_threads = std::thread::hardware_concurrency() + 1;
@@ -232,7 +232,7 @@ error_code request_handler::add_msg_handler(
    );
 }
 
-void request_handler::publisher( std::shared_ptr< message_broker > broker )
+void request_handler::publisher( std::shared_ptr< message_broker > publisher_broker, std::shared_ptr< message_broker > consumer_broker )
 {
    while ( true )
    {
@@ -247,11 +247,11 @@ void request_handler::publisher( std::shared_ptr< message_broker > broker )
          break;
       }
 
-      auto r = broker->publish( *m );
+      auto r = publisher_broker->publish( *m );
 
       if ( r == error_code::success )
       {
-         broker->ack_message( m->delivery_tag );
+         consumer_broker->ack_message( m->delivery_tag );
       }
       else
       {
