@@ -492,6 +492,8 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 
 error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
 {
+   std::lock_guard< std::mutex > lock( _amqp_mutex );
+
    int res = amqp_basic_ack(
       _connection,
       _channel,
