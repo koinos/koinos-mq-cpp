@@ -7,9 +7,6 @@
 #include <amqp.h>
 #include <amqp_framing.h>
 
-#include <boost/lexical_cast.hpp>
-#include <boost/thread/with_lock_guard.hpp>
-
 #include <koinos/log.hpp>
 #include <koinos/util.hpp>
 
@@ -26,7 +23,9 @@ private:
 
    std::optional< std::string > error_info( amqp_rpc_reply_t r ) noexcept;
 
-   error_code connect_internal(
+   void disconnect_lockfree() noexcept;
+
+   error_code connect_lockfree(
       const std::string& host,
       uint16_t port,
       const std::string& vhost,
@@ -83,7 +82,11 @@ message_broker_impl::~message_broker_impl()
 void message_broker_impl::disconnect() noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
+   disconnect_lockfree();
+}
 
+void message_broker_impl::disconnect_lockfree() noexcept
+{
    if ( !_connection )
       return;
 
@@ -119,6 +122,8 @@ bool message_broker_impl::is_connected() noexcept
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
 {
+   std::lock_guard< std::mutex > lock( _amqp_mutex );
+
    amqp_basic_properties_t props;
 
    props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
@@ -137,19 +142,16 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
       props.correlation_id = amqp_cstring_bytes( msg.correlation_id->c_str() );
    }
 
-   int err = 0;
-   boost::with_lock_guard( _amqp_mutex, [&] {
-      err = amqp_basic_publish(
-         _connection,
-         _channel,
-         amqp_cstring_bytes( msg.exchange.c_str() ),
-         amqp_cstring_bytes( msg.routing_key.c_str() ),
-         0,
-         0,
-         &props,
-         amqp_cstring_bytes( msg.data.c_str() )
-      );
-   } );
+   int err = amqp_basic_publish(
+      _connection,
+      _channel,
+      amqp_cstring_bytes( msg.exchange.c_str() ),
+      amqp_cstring_bytes( msg.routing_key.c_str() ),
+      0,
+      0,
+      &props,
+      amqp_cstring_bytes( msg.data.c_str() )
+   );
 
    if ( err != AMQP_STATUS_OK )
       return error_code::failure;
@@ -157,73 +159,63 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
    return error_code::success;
 }
 
-error_code message_broker_impl::connect_internal(
+error_code message_broker_impl::connect_lockfree(
    const std::string& host,
    uint16_t port,
    const std::string& vhost,
    const std::string& user,
    const std::string& pass ) noexcept
 {
-   disconnect();
+   disconnect_lockfree();
 
    amqp_socket_t *socket = nullptr;
 
-   boost::with_lock_guard( _amqp_mutex, [&] {
-      _connection = amqp_new_connection();
-      socket = amqp_tcp_socket_new( _connection );
-   });
+   _connection = amqp_new_connection();
+   socket = amqp_tcp_socket_new( _connection );
 
    if ( !socket )
    {
       LOG(error) << "failed to create socket";
-      disconnect();
+      disconnect_lockfree();
       return error_code::failure;
    }
 
-   int err = 0;
-
-   boost::with_lock_guard( _amqp_mutex, [&] {
-      err = amqp_socket_open( socket, host.c_str(), port );
-   });
+   int err = amqp_socket_open( socket, host.c_str(), port );
 
    if ( err != AMQP_STATUS_OK )
    {
       LOG(error) << "failed to open socket";
-      disconnect();
+      disconnect_lockfree();
       return error_code::failure;
    }
 
    amqp_rpc_reply_t r;
 
-   boost::with_lock_guard( _amqp_mutex, [&] {
-      r = amqp_login(
-         _connection,
-         vhost.c_str(),
-         AMQP_DEFAULT_MAX_CHANNELS,
-         AMQP_DEFAULT_FRAME_SIZE,
-         0 /* seconds between heartbeat frames */,
-         AMQP_SASL_METHOD_PLAIN,
-         user.c_str(),
-         pass.c_str()
-      );
-   });
+   r = amqp_login(
+      _connection,
+      vhost.c_str(),
+      AMQP_DEFAULT_MAX_CHANNELS,
+      AMQP_DEFAULT_FRAME_SIZE,
+      0 /* seconds between heartbeat frames */,
+      AMQP_SASL_METHOD_PLAIN,
+      user.c_str(),
+      pass.c_str()
+   );
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
       LOG(error) << error_info( r ).value();
-      disconnect();
+      disconnect_lockfree();
       return error_code::failure;
    }
 
-   boost::with_lock_guard( _amqp_mutex, [&] {
-      amqp_channel_open( _connection, _channel );
-      r = amqp_get_rpc_reply( _connection );
-   });
+   amqp_channel_open( _connection, _channel );
+   r = amqp_get_rpc_reply( _connection );
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
       LOG(error) << error_info( r ).value();
-      disconnect();
+      disconnect_lockfree();
       return error_code::failure;
    }
 
@@ -232,6 +224,8 @@ error_code message_broker_impl::connect_internal(
 
 error_code message_broker_impl::connect( const std::string& url ) noexcept
 {
+   std::lock_guard< std::mutex > lock( _amqp_mutex );
+
    std::vector< char > tmp_url( url.begin(), url.end() );
    tmp_url.push_back( '\0' );
 
@@ -244,7 +238,7 @@ error_code message_broker_impl::connect( const std::string& url ) noexcept
       return error_code::failure;
    }
 
-   return connect_internal(
+   return connect_lockfree(
       std::string( cinfo.host ),
       uint16_t( cinfo.port ),
       std::string( "/" ) + cinfo.vhost,
@@ -494,14 +488,14 @@ error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
 
-   int res = amqp_basic_ack(
+   int err = amqp_basic_ack(
       _connection,
       _channel,
       delivery_tag,
       false
    );
 
-   return res ? error_code::failure : error_code::success;
+   return err != AMQP_STATUS_OK ? error_code::failure : error_code::success;
 }
 
 } // detail
