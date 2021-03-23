@@ -1,4 +1,5 @@
 #include <koinos/mq/client.hpp>
+#include <koinos/mq/util.hpp>
 #include <koinos/log.hpp>
 
 #include <atomic>
@@ -9,11 +10,6 @@
 namespace koinos::mq {
 
 namespace detail {
-
-constexpr const char* broadcast_exchange    = "koinos_event";
-constexpr const char* rpc_exchange          = "koinos_rpc";
-constexpr const char* rpc_reply_to_exchange = "koinos_rpc_reply";
-constexpr const char* rpc_routing_prefix    = "koinos_rpc_";
 
 class client_impl final
 {
@@ -26,7 +22,7 @@ public:
 
    bool is_connected() const;
 
-   std::shared_future< std::string > rpc( const std::string& rpc_type, const std::string& payload, const std::string& content_type, int64_t timeout_ms );
+   std::shared_future< std::string > rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms );
    void broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type );
 
 private:
@@ -130,12 +126,12 @@ error_code client_impl::prepare()
    error_code ec;
 
    ec = _reader_broker->declare_exchange(
-      broadcast_exchange, // Name
-      "topic",            // Type
-      false,              // Passive
-      true,               // Durable
-      false,              // Auto-deleted
-      false               // Internal
+      exchange::event,      // Name
+      exchange_type::topic, // Type
+      false,                // Passive
+      true,                 // Durable
+      false,                // Auto-deleted
+      false                 // Internal
    );
 
    if ( ec != error_code::success )
@@ -145,23 +141,8 @@ error_code client_impl::prepare()
    }
 
    ec = _reader_broker->declare_exchange(
-      rpc_exchange, // Name
-      "direct",     // Type
-      false,        // Passive
-      true,         // Durable
-      false,        // Auto-deleted
-      false         // Internal
-   );
-
-   if ( ec != error_code::success )
-   {
-      LOG(error) << "error while declaring rpc exchange";
-      return ec;
-   }
-
-   ec = _reader_broker->declare_exchange(
-      rpc_reply_to_exchange, // Name
-      "direct",              // Type
+      exchange::rpc,         // Name
+      exchange_type::direct, // Type
       false,                 // Passive
       true,                  // Durable
       false,                 // Auto-deleted
@@ -170,7 +151,7 @@ error_code client_impl::prepare()
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while declaring rpc reply-to exchange";
+      LOG(error) << "error while declaring rpc exchange";
       return ec;
    }
 
@@ -190,7 +171,7 @@ error_code client_impl::prepare()
 
    _queue_name = queue_res.second;
 
-   ec = _reader_broker->bind_queue( queue_res.second, rpc_reply_to_exchange, queue_res.second );
+   ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
       LOG(error) << "error while binding temporary queue";
@@ -242,14 +223,14 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
    }
 }
 
-std::shared_future< std::string > client_impl::rpc( const std::string& rpc_type, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
+std::shared_future< std::string > client_impl::rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
    auto promise = std::promise< std::string >();
    message msg;
-   msg.exchange = rpc_exchange;
-   msg.routing_key = rpc_routing_prefix + rpc_type;
+   msg.exchange = exchange::rpc;
+   msg.routing_key = service_routing_key( service );
    msg.content_type = content_type;
    msg.data = payload;
    msg.reply_to = _queue_name;
@@ -308,7 +289,7 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
    auto err = _writer_broker->publish( message {
-      .exchange     = broadcast_exchange,
+      .exchange     = exchange::event,
       .routing_key  = routing_key,
       .content_type = content_type,
       .data         = payload
@@ -327,14 +308,14 @@ error_code client::connect( const std::string& amqp_url )
    return _my->connect( amqp_url );
 }
 
-std::shared_future< std::string > client::rpc( const std::string& content_type, const std::string& rpc_type, const std::string& payload, int64_t timeout_ms )
+std::shared_future< std::string > client::rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
 {
-   return _my->rpc( content_type, rpc_type, payload, timeout_ms );
+   return _my->rpc( service, payload, content_type, timeout_ms );
 }
 
-void client::broadcast( const std::string& content_type, const std::string& routing_key, const std::string& payload )
+void client::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
 {
-   _my->broadcast( content_type, routing_key, payload );
+   _my->broadcast( routing_key, payload, content_type );
 }
 
 bool client::is_connected() const

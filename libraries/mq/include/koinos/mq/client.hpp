@@ -1,7 +1,7 @@
 #pragma once
 
 #include <koinos/mq/message_broker.hpp>
-
+#include <koinos/mq/service_name.hpp>
 #include <koinos/exception.hpp>
 
 #include <future>
@@ -29,7 +29,7 @@ public:
    bool is_connected() const;
 
    std::shared_future< std::string > rpc(
-      const std::string& rpc_type,
+      const std::string& service,
       const std::string& payload,
       const std::string& content_type = "application/json",
       int64_t timeout_ms = 5000 );

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <koinos/mq/message_broker.hpp>
+#include <koinos/mq/service_name.hpp>
 #include <koinos/log.hpp>
 #include <koinos/util.hpp>
 
@@ -38,6 +39,24 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       void stop();
       error_code connect( const std::string& amqp_url );
 
+      error_code add_broadcast_handler(
+         const std::string& routing_key,
+         msg_handler_void_func func,
+         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/json"; }
+      );
+
+      error_code add_rpc_handler(
+         const std::string& service,
+         msg_handler_string_func func,
+         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/json"; }
+      );
+
+   private:
+      void consumer( std::shared_ptr< message_broker > broker );
+      void publisher(
+         std::shared_ptr< message_broker > publisher_broker,
+         std::shared_ptr< message_broker > consumer_broker );
+
       error_code add_msg_handler(
          const std::string& exchange,
          const std::string& routing_key,
@@ -54,10 +73,6 @@ class request_handler : public std::enable_shared_from_this< request_handler >
          bool competing_consumer,
          handler_verify_func,
          msg_handler_string_func );
-
-   private:
-      void consumer( std::shared_ptr< message_broker > broker );
-      void publisher( std::shared_ptr< message_broker > broker );
 
       std::unique_ptr< std::thread >    _consumer_thread;
       std::shared_ptr< message_broker > _consumer_broker;
