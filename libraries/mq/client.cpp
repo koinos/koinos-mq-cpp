@@ -138,7 +138,7 @@ error_code client_impl::prepare()
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while declaring broadcast exchange";
+      LOG(error) << "Error while declaring broadcast exchange";
       return ec;
    }
 
@@ -153,7 +153,7 @@ error_code client_impl::prepare()
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while declaring rpc exchange";
+      LOG(error) << "Error while declaring rpc exchange";
       return ec;
    }
 
@@ -167,7 +167,7 @@ error_code client_impl::prepare()
 
    if ( queue_res.first != error_code::success )
    {
-      LOG(error) << "error while declaring temporary queue";
+      LOG(error) << "Error while declaring temporary queue";
       return queue_res.first;
    }
 
@@ -176,7 +176,7 @@ error_code client_impl::prepare()
    ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while binding temporary queue";
+      LOG(error) << "Error while binding temporary queue";
       return ec;
    }
 
@@ -196,20 +196,20 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "failed to consume message";
+         LOG(error) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "consumption succeeded but resulted in an empty message";
+         LOG(error) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
 
       auto& msg = result.second;
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(error) << "received message without a correlation id";
+         LOG(error) << "Received message without a correlation id";
          continue;
       }
 
@@ -255,11 +255,11 @@ std::shared_future< std::string > client_impl::rpc( const std::string& service, 
 
    LOG(debug) << "Sending RPC";
    LOG(debug) << " -> correlation_id: " << *msg.correlation_id;
-   LOG(debug) << " -> exchange: " << msg.exchange;
-   LOG(debug) << " -> routing_key: " << msg.routing_key;
-   LOG(debug) << " -> content_type: " << msg.content_type;
-   LOG(debug) << " -> reply_to: " << *msg.reply_to;
-   LOG(debug) << " -> data: " << msg.data;
+   LOG(debug) << " -> exchange:       " << msg.exchange;
+   LOG(debug) << " -> routing_key:    " << msg.routing_key;
+   LOG(debug) << " -> content_type:   " << msg.content_type;
+   LOG(debug) << " -> reply_to:       " << *msg.reply_to;
+   LOG(debug) << " -> data:           " << msg.data;
 
    auto err = _writer_broker->publish( msg );
    if ( err != error_code::success )

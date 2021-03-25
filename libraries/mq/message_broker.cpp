@@ -175,7 +175,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( !socket )
    {
-      LOG(error) << "failed to create socket";
+      LOG(error) << "Failed to create socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -184,7 +184,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( err != AMQP_STATUS_OK )
    {
-      LOG(error) << "failed to open socket";
+      LOG(error) << "Failed to open socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -234,7 +234,7 @@ error_code message_broker_impl::connect( const std::string& url ) noexcept
 
    if( result != AMQP_STATUS_OK )
    {
-      LOG(error) << "unable to parse provided amqp url";
+      LOG(error) << "Unable to parse provided AMQP url";
       return error_code::failure;
    }
 
