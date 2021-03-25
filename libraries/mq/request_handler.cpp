@@ -173,7 +173,7 @@ error_code request_handler::add_msg_handler(
       if ( queue_res.first != error_code::success )
          return queue_res.first;
 
-      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key, !competing_consumer );
+      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key, true );
       if ( ec != error_code::success )
          return ec;
 
@@ -249,25 +249,25 @@ void request_handler::publisher( std::shared_ptr< message_broker > publisher_bro
 
       auto r = publisher_broker->publish( *m );
 
-      if ( r == error_code::success )
-      {
-         r = consumer_broker->ack_message( m->delivery_tag );
-         if ( r != error_code::success )
-         {
-            std::string correlation_id = "<none>";
-
-            if ( m->correlation_id )
-               correlation_id = *m->correlation_id;
-
-            LOG(error) << "Failed to ack";
-            LOG(error) << " -> correlation_id: " << correlation_id;
-            LOG(error) << " -> delivery_tag:   " << m->delivery_tag;
-         }
-      }
-      else
-      {
-         LOG(error) << "An error has occurred while publishing message";
-      }
+//      if ( r == error_code::success )
+//      {
+//         r = consumer_broker->ack_message( m->delivery_tag );
+//         if ( r != error_code::success )
+//         {
+//            std::string correlation_id = "<none>";
+//
+//            if ( m->correlation_id )
+//               correlation_id = *m->correlation_id;
+//
+//            LOG(error) << "Failed to ack";
+//            LOG(error) << " -> correlation_id: " << correlation_id;
+//            LOG(error) << " -> delivery_tag:   " << m->delivery_tag;
+//         }
+//      }
+//      else
+//      {
+//         LOG(error) << "An error has occurred while publishing message";
+//      }
    }
 }
 
