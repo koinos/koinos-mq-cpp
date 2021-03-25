@@ -175,7 +175,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( !socket )
    {
-      LOG(error) << "failed to create socket";
+      LOG(error) << "Failed to create socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -184,7 +184,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( err != AMQP_STATUS_OK )
    {
-      LOG(error) << "failed to open socket";
+      LOG(error) << "Failed to open socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -234,7 +234,7 @@ error_code message_broker_impl::connect( const std::string& url ) noexcept
 
    if( result != AMQP_STATUS_OK )
    {
-      LOG(error) << "unable to parse provided amqp url";
+      LOG(error) << "Unable to parse provided AMQP url";
       return error_code::failure;
    }
 
@@ -367,7 +367,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
 {
    if ( r.reply_type == AMQP_RESPONSE_NONE )
    {
-      return "missing rpc reply type";
+      return "Missing RPC reply type";
    }
    else if ( r.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
    {
@@ -385,7 +385,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "server connection error %u, message: %.*s",
+               "Server connection error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -398,7 +398,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "server channel error %u, message: %.*s",
+               "Server channel error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -406,7 +406,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             return buf;
          }
          default:
-            snprintf( buf, bufsize, "unknown server error, method id 0x%08X", r.reply.id );
+            snprintf( buf, bufsize, "Unknown server error, method ID 0x%08X", r.reply.id );
             return buf;
       }
    }

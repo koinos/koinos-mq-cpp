@@ -173,7 +173,7 @@ error_code request_handler::add_msg_handler(
       if ( queue_res.first != error_code::success )
          return queue_res.first;
 
-      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key, !competing_consumer );
+      ec = _consumer_broker->bind_queue( queue_res.second, exchange, routing_key, true );
       if ( ec != error_code::success )
          return ec;
 
@@ -249,13 +249,9 @@ void request_handler::publisher( std::shared_ptr< message_broker > publisher_bro
 
       auto r = publisher_broker->publish( *m );
 
-      if ( r == error_code::success )
+      if ( r != error_code::success )
       {
-         consumer_broker->ack_message( m->delivery_tag );
-      }
-      else
-      {
-         LOG(error) << "an error has occurred while publishing message";
+         LOG(error) << "An error has occurred while publishing message";
       }
    }
 }
@@ -276,15 +272,30 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "failed to consume message";
+         LOG(error) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "consumption succeeded but resulted in an empty message";
+         LOG(error) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
+
+      LOG(debug) << "Received message";
+
+      LOG(debug) << " -> exchange:       " << result.second->exchange;
+      LOG(debug) << " -> routing_key:    " << result.second->routing_key;
+      LOG(debug) << " -> content_type:   " << result.second->content_type;
+
+      if ( result.second->correlation_id )
+         LOG(debug) << " -> correlation_id: " << *result.second->correlation_id;
+
+      if ( result.second->reply_to )
+         LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
+
+      LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
+      LOG(debug) << " -> data:           " << result.second->data;
 
       try
       {

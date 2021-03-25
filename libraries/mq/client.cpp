@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <random>
+#include <thread>
 
 namespace koinos::mq {
 
@@ -29,6 +30,7 @@ private:
    error_code prepare();
    void consumer( std::shared_ptr< message_broker > broker );
    std::string random_alphanumeric( std::size_t len );
+   void timeout( std::shared_future< std::string > future, std::string correlation_id, uint64_t timeout_ms );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
@@ -136,7 +138,7 @@ error_code client_impl::prepare()
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while declaring broadcast exchange";
+      LOG(error) << "Error while declaring broadcast exchange";
       return ec;
    }
 
@@ -151,7 +153,7 @@ error_code client_impl::prepare()
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while declaring rpc exchange";
+      LOG(error) << "Error while declaring rpc exchange";
       return ec;
    }
 
@@ -165,7 +167,7 @@ error_code client_impl::prepare()
 
    if ( queue_res.first != error_code::success )
    {
-      LOG(error) << "error while declaring temporary queue";
+      LOG(error) << "Error while declaring temporary queue";
       return queue_res.first;
    }
 
@@ -174,7 +176,7 @@ error_code client_impl::prepare()
    ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
-      LOG(error) << "error while binding temporary queue";
+      LOG(error) << "Error while binding temporary queue";
       return ec;
    }
 
@@ -194,20 +196,20 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "failed to consume message";
+         LOG(error) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "consumption succeeded but resulted in an empty message";
+         LOG(error) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
 
       auto& msg = result.second;
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(error) << "received message without a correlation id";
+         LOG(error) << "Received message without a correlation id";
          continue;
       }
 
@@ -219,6 +221,21 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
             it->second.set_value( std::move( msg->data ) );
             _promise_map.erase( it );
          }
+      }
+   }
+}
+
+void client_impl::timeout( std::shared_future< std::string > future, std::string correlation_id, uint64_t timeout_ms )
+{
+   auto status = future.wait_for( std::chrono::milliseconds( timeout_ms ) );
+   if ( status != std::future_status::ready )
+   {
+      std::lock_guard< std::mutex > guard( _promise_map_mutex );
+      auto itr = _promise_map.find( correlation_id );
+      if ( itr != _promise_map.end() )
+      {
+         itr->second.set_exception( std::make_exception_ptr( timeout_error( "Request timeout: " + correlation_id ) ) );
+         _promise_map.erase( itr );
       }
    }
 }
@@ -235,6 +252,14 @@ std::shared_future< std::string > client_impl::rpc( const std::string& service, 
    msg.data = payload;
    msg.reply_to = _queue_name;
    msg.correlation_id = random_alphanumeric( 32 );
+
+   LOG(debug) << "Sending RPC";
+   LOG(debug) << " -> correlation_id: " << *msg.correlation_id;
+   LOG(debug) << " -> exchange:       " << msg.exchange;
+   LOG(debug) << " -> routing_key:    " << msg.routing_key;
+   LOG(debug) << " -> content_type:   " << msg.content_type;
+   LOG(debug) << " -> reply_to:       " << *msg.reply_to;
+   LOG(debug) << " -> data:           " << msg.data;
 
    auto err = _writer_broker->publish( msg );
    if ( err != error_code::success )
@@ -260,26 +285,8 @@ std::shared_future< std::string > client_impl::rpc( const std::string& service, 
 
    if ( timeout_ms > 0 )
    {
-      std::async(
-         std::launch::async,
-         [&]( std::shared_future< std::string > future )
-         {
-            auto status = future.wait_for( std::chrono::milliseconds( timeout_ms ) );
-            if ( status != std::future_status::ready )
-            {
-               std::lock_guard< std::mutex > guard( _promise_map_mutex );
-               auto itr = _promise_map.find( *msg.correlation_id );
-               if ( itr != _promise_map.end() )
-               {
-                  itr->second.set_exception( std::make_exception_ptr( timeout_error( "Request timeout" ) ) );
-                  _promise_map.erase( itr );
-               }
-            }
-         },
-         future_val
-      );
+      std::thread( &client_impl::timeout, this, future_val, *msg.correlation_id, timeout_ms ).detach();
    }
-
 
    return future_val;
 }
