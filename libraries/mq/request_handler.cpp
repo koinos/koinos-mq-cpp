@@ -251,7 +251,16 @@ void request_handler::publisher( std::shared_ptr< message_broker > publisher_bro
 
       if ( r == error_code::success )
       {
-         consumer_broker->ack_message( m->delivery_tag );
+         r = consumer_broker->ack_message( m->delivery_tag );
+         if ( r != error_code::success )
+         {
+            std::string correlation_id = "<none>";
+
+            if ( m->correlation_id )
+               correlation_id = *m->correlation_id;
+
+            LOG(error) << "failed to ack correlation_id: " << correlation_id << ", delivery_tag: " << m->delivery_tag;
+         }
       }
       else
       {
