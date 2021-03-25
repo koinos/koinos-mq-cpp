@@ -249,25 +249,10 @@ void request_handler::publisher( std::shared_ptr< message_broker > publisher_bro
 
       auto r = publisher_broker->publish( *m );
 
-//      if ( r == error_code::success )
-//      {
-//         r = consumer_broker->ack_message( m->delivery_tag );
-//         if ( r != error_code::success )
-//         {
-//            std::string correlation_id = "<none>";
-//
-//            if ( m->correlation_id )
-//               correlation_id = *m->correlation_id;
-//
-//            LOG(error) << "Failed to ack";
-//            LOG(error) << " -> correlation_id: " << correlation_id;
-//            LOG(error) << " -> delivery_tag:   " << m->delivery_tag;
-//         }
-//      }
-//      else
-//      {
-//         LOG(error) << "An error has occurred while publishing message";
-//      }
+      if ( r != error_code::success )
+      {
+         LOG(error) << "An error has occurred while publishing message";
+      }
    }
 }
 
@@ -298,11 +283,17 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
       }
 
       LOG(debug) << "Received message";
-      LOG(debug) << " -> correlation_id: " << *result.second->correlation_id;
+
       LOG(debug) << " -> exchange:       " << result.second->exchange;
       LOG(debug) << " -> routing_key:    " << result.second->routing_key;
       LOG(debug) << " -> content_type:   " << result.second->content_type;
-      LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
+
+      if ( result.second->correlation_id )
+         LOG(debug) << " -> correlation_id: " << *result.second->correlation_id;
+
+      if ( result.second->reply_to )
+         LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
+
       LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
       LOG(debug) << " -> data:           " << result.second->data;
 
