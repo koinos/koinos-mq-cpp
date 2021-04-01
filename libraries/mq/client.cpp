@@ -1,6 +1,7 @@
 #include <koinos/mq/client.hpp>
 #include <koinos/mq/util.hpp>
 #include <koinos/log.hpp>
+#include <koinos/util.hpp>
 
 #include <atomic>
 #include <map>
@@ -29,7 +30,6 @@ public:
 private:
    error_code prepare();
    void consumer( std::shared_ptr< message_broker > broker );
-   std::string random_alphanumeric( std::size_t len );
    void timeout( std::shared_future< std::string > future, std::string correlation_id, uint64_t timeout_ms );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
@@ -42,35 +42,15 @@ private:
    std::string                                          _queue_name;
    std::atomic< bool >                                  _running   = true;
    bool                                                 _connected = false;
-
-   std::mt19937                                         _random_generator;
 };
 
 client_impl::client_impl() :
    _writer_broker( std::make_unique< message_broker >() ),
-   _reader_broker( std::make_unique< message_broker >() ),
-   _random_generator( std::random_device()() ) {}
+   _reader_broker( std::make_unique< message_broker >() ) {}
 
 client_impl::~client_impl()
 {
    disconnect();
-}
-
-std::string client_impl::random_alphanumeric( std::size_t len )
-{
-   auto random_char = [this]() -> char
-   {
-      constexpr char charset[] =
-         "0123456789"
-         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-         "abcdefghijklmnopqrstuvwxyz";
-      constexpr std::size_t max_index = sizeof( charset ) - 1;
-      std::uniform_int_distribution<> distribution( 0, max_index );
-      return charset[ distribution( this->_random_generator ) % max_index ];
-   };
-   std::string str( len, 0 );
-   std::generate_n( str.begin(), len, random_char );
-   return str;
 }
 
 error_code client_impl::connect( const std::string& amqp_url )

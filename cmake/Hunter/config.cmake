@@ -7,8 +7,8 @@ hunter_config(Boost
 )
 
 hunter_config(koinos_util
-   URL  "https://github.com/koinos/koinos-util-cpp/archive/43280d7adc1f033e42bb2e0d50bb39d31a2dbeaa.tar.gz"
-   SHA1 "5be977696aa13be3d87500b486cd9e6cef0f12a9"
+   URL  "https://github.com/koinos/koinos-util-cpp/archive/32f7589037c6ebcb0c55f2dc558df44ed06176a0.tar.gz"
+   SHA1 "958a61b9316556382ac6300f7a40798c9e375040"
 )
 
 hunter_config(koinos_log
