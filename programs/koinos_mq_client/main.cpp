@@ -3,6 +3,7 @@
 
 #include <boost/program_options.hpp>
 
+#include <koinos/log.hpp>
 #include <koinos/mq/client.hpp>
 
 using namespace boost;
@@ -15,6 +16,7 @@ using namespace koinos;
 #define ROUTING_KEY_OPTION  "routing-key"
 #define PAYLOAD_OPTION      "payload"
 #define TIMEOUT_OPTION      "timeout"
+#define LOG_FILTER_OPTION   "log-filter"
 
 int main( int argc, char** argv )
 {
@@ -27,6 +29,7 @@ int main( int argc, char** argv )
       ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
       ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 1000 ), "timeout of the message" )
       ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
+      ( LOG_FILTER_OPTION   ",f", program_options::value< log_level   >()->default_value( log_level::info ), "default log filter level" )
       ;
 
    program_options::variables_map vm;
@@ -44,11 +47,17 @@ int main( int argc, char** argv )
    std::string routing_key  = vm[ ROUTING_KEY_OPTION ].as< std::string >();
    std::string payload      = vm[ PAYLOAD_OPTION ].as< std::string >();
    uint64_t timeout         = vm[ TIMEOUT_OPTION ].as< uint64_t >();
+   log_level level          = vm[ LOG_FILTER_OPTION ].as< log_level >();
+
+   initialize_logging( "mq_client", {} /* randomized unique ID */, level );
 
    mq::client c;
 
    if( c.connect( amqp_url ) != mq::error_code::success )
+   {
+      LOG(error) << "Unable to connect to the AMQP server";
       return EXIT_FAILURE;
+   }
 
    try
    {
