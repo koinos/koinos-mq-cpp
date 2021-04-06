@@ -25,7 +25,7 @@ int main( int argc, char** argv )
       ( BROADCAST_OPTION    ",b", program_options::value< bool        >()->default_value( false ), "broadcast mode" )
       ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/json" ), "content type of the message" )
       ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
-      ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 5000 ), "timeout of the message" )
+      ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 1000 ), "timeout of the message" )
       ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
       ;
 
@@ -58,7 +58,7 @@ int main( int argc, char** argv )
       }
       else
       {
-         auto r = c.rpc( routing_key, payload, content_type, timeout );
+         auto r = c.rpc( routing_key, payload, timeout, mq::retry_policy::exponential_backoff, content_type );
          std::cout << r.get() << std::endl;
       }
    }

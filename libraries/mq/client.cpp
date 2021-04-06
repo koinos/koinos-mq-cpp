@@ -24,13 +24,22 @@ public:
 
    bool is_connected() const;
 
-   std::shared_future< std::string > rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms );
-   void broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type );
+   std::shared_future< std::string > rpc(
+      const std::string& service,
+      const std::string& payload,
+      uint64_t timeout_ms,
+      retry_policy policy,
+      const std::string& content_type );
+
+   void broadcast(
+      const std::string& routing_key,
+      const std::string& payload,
+      const std::string& content_type );
 
 private:
    error_code prepare();
    void consumer( std::shared_ptr< message_broker > broker );
-   void timeout( std::shared_future< std::string > future, std::string correlation_id, uint64_t timeout_ms );
+   void timeout_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
@@ -42,6 +51,8 @@ private:
    std::string                                          _queue_name;
    std::atomic< bool >                                  _running   = true;
    bool                                                 _connected = false;
+   static constexpr uint64_t                            _max_expiration = 30000;
+   static constexpr std::size_t                         _correlation_id_len = 32;
 };
 
 client_impl::client_impl() :
@@ -205,53 +216,105 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
    }
 }
 
-void client_impl::timeout( std::shared_future< std::string > future, std::string correlation_id, uint64_t timeout_ms )
+void client_impl::timeout_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
 {
-   auto status = future.wait_for( std::chrono::milliseconds( timeout_ms ) );
-   if ( status != std::future_status::ready )
+   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready )
    {
       std::lock_guard< std::mutex > guard( _promise_map_mutex );
-      auto itr = _promise_map.find( correlation_id );
-      if ( itr != _promise_map.end() )
+      auto node_handle = _promise_map.extract( msg->correlation_id.value() );
+      if ( !node_handle.empty() )
       {
-         itr->second.set_exception( std::make_exception_ptr( timeout_error( "Request timeout: " + correlation_id ) ) );
-         _promise_map.erase( itr );
+         switch ( policy )
+         {
+         case retry_policy::none:
+            node_handle.mapped().set_exception( std::make_exception_ptr( timeout_error( "Request timeout: " + msg->correlation_id.value() ) ) );
+            return;
+         case retry_policy::exponential_backoff:
+            LOG(warning) << "No response to correlation ID " << msg->correlation_id.value() << " within " << msg->expiration.value() << "ms";
+            LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
+            LOG(debug) << " -> exchange:       " << msg->exchange;
+            LOG(debug) << " -> routing_key:    " << msg->routing_key;
+            LOG(debug) << " -> content_type:   " << msg->content_type;
+            LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
+            LOG(debug) << " -> data:           " << msg->data;
+            LOG(debug) << " -> expiration:     " << msg->expiration.value();
+
+            // Adjust our message for another attempt
+            msg->correlation_id = random_alphanumeric( _correlation_id_len );
+            msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
+
+            // Publish another attempt
+            if ( _writer_broker->publish( *msg ) != error_code::success )
+            {
+               node_handle.mapped().set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
+               return;
+            }
+
+            // Update and reinsert our node handle
+            node_handle.key()              = msg->correlation_id.value();
+            const auto [ it, success, nh ] = _promise_map.insert( std::move( node_handle ) );
+
+            if ( !success )
+            {
+               nh.mapped().set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
+               return;
+            }
+            break;
+         }
+      }
+      else
+      {
+         // The expected correlation ID did not exist in the promise map... stop the thread
+         LOG(warning) << "Correlation ID " << msg->correlation_id.value() << " expected but not found in the promise map";
+         return;
       }
    }
 }
 
-std::shared_future< std::string > client_impl::rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
+std::shared_future< std::string > client_impl::rpc(
+   const std::string& service,
+   const std::string& payload,
+   uint64_t timeout_ms,
+   retry_policy policy,
+   const std::string& content_type )
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
    auto promise = std::promise< std::string >();
-   message msg;
-   msg.exchange = exchange::rpc;
-   msg.routing_key = service_routing_key( service );
-   msg.content_type = content_type;
-   msg.data = payload;
-   msg.reply_to = _queue_name;
-   msg.correlation_id = random_alphanumeric( 32 );
+
+   auto msg = std::make_shared< message >();
+   msg->exchange = exchange::rpc;
+   msg->routing_key = service_routing_key( service );
+   msg->content_type = content_type;
+   msg->data = payload;
+   msg->reply_to = _queue_name;
+   msg->correlation_id = random_alphanumeric( _correlation_id_len );
+
+   if ( timeout_ms > 0 )
+      msg->expiration = timeout_ms;
 
    LOG(debug) << "Sending RPC";
-   LOG(debug) << " -> correlation_id: " << *msg.correlation_id;
-   LOG(debug) << " -> exchange:       " << msg.exchange;
-   LOG(debug) << " -> routing_key:    " << msg.routing_key;
-   LOG(debug) << " -> content_type:   " << msg.content_type;
-   LOG(debug) << " -> reply_to:       " << *msg.reply_to;
-   LOG(debug) << " -> data:           " << msg.data;
+   LOG(debug) << " -> correlation_id: " << *msg->correlation_id;
+   LOG(debug) << " -> exchange:       " << msg->exchange;
+   LOG(debug) << " -> routing_key:    " << msg->routing_key;
+   LOG(debug) << " -> content_type:   " << msg->content_type;
+   LOG(debug) << " -> reply_to:       " << *msg->reply_to;
+   LOG(debug) << " -> data:           " << msg->data;
 
-   auto err = _writer_broker->publish( msg );
+   if ( msg->expiration.has_value() )
+      LOG(debug) << " -> expiration:     " << *msg->expiration;
+
+   auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
    {
-      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending rpc message" ) ) );
+      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
       return promise.get_future();
    }
 
    std::shared_future< std::string > future_val;
    {
       std::lock_guard< std::mutex > guard( _promise_map_mutex );
-      auto empl_res = _promise_map.emplace( *msg.correlation_id, std::move(promise) );
+      auto empl_res = _promise_map.emplace( *msg->correlation_id, std::move(promise) );
 
       if ( !empl_res.second )
       {
@@ -265,7 +328,7 @@ std::shared_future< std::string > client_impl::rpc( const std::string& service, 
 
    if ( timeout_ms > 0 )
    {
-      std::thread( &client_impl::timeout, this, future_val, *msg.correlation_id, timeout_ms ).detach();
+      std::thread( &client_impl::timeout_handler, this, future_val, msg, policy ).detach();
    }
 
    return future_val;
@@ -295,9 +358,14 @@ error_code client::connect( const std::string& amqp_url )
    return _my->connect( amqp_url );
 }
 
-std::shared_future< std::string > client::rpc( const std::string& service, const std::string& payload, const std::string& content_type, int64_t timeout_ms )
+std::shared_future< std::string > client::rpc(
+   const std::string& service,
+   const std::string& payload,
+   uint64_t timeout_ms,
+   retry_policy policy,
+   const std::string& content_type )
 {
-   return _my->rpc( service, payload, content_type, timeout_ms );
+   return _my->rpc( service, payload, timeout_ms, policy, content_type );
 }
 
 void client::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )

@@ -29,6 +29,7 @@ struct message
    uint64_t                     delivery_tag;
    std::optional< std::string > reply_to;
    std::optional< std::string > correlation_id;
+   std::optional< uint64_t >    expiration;
 };
 
 namespace detail { struct message_broker_impl; }
