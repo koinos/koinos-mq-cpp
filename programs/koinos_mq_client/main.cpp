@@ -29,7 +29,7 @@ int main( int argc, char** argv )
       ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
       ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 1000 ), "timeout of the message" )
       ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
-      ( LOG_FILTER_OPTION   ",f", program_options::value< log_level   >()->default_value( log_level::info ), "default log filter level" )
+      ( LOG_FILTER_OPTION   ",l", program_options::value< log_level   >()->default_value( log_level::info ), "default log filter level" )
       ;
 
    program_options::variables_map vm;
