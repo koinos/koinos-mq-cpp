@@ -1,2 +1,2 @@
-add_subdirectory(mq_client)
+add_subdirectory(koinos_mq_client)
 
