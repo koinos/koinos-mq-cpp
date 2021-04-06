@@ -230,18 +230,25 @@ void client_impl::timeout_handler( std::shared_future< std::string > future, std
             node_handle.mapped().set_exception( std::make_exception_ptr( timeout_error( "Request timeout: " + msg->correlation_id.value() ) ) );
             return;
          case retry_policy::exponential_backoff:
-            LOG(warning) << "No response to correlation ID " << msg->correlation_id.value() << " within " << msg->expiration.value() << "ms";
+            LOG(warning) << "No response to message with correlation ID: "
+               << msg->correlation_id.value() << ", within " << msg->expiration.value() << "ms";
+
             LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
             LOG(debug) << " -> exchange:       " << msg->exchange;
             LOG(debug) << " -> routing_key:    " << msg->routing_key;
             LOG(debug) << " -> content_type:   " << msg->content_type;
             LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
-            LOG(debug) << " -> data:           " << msg->data;
             LOG(debug) << " -> expiration:     " << msg->expiration.value();
+            LOG(debug) << " -> data:           " << msg->data;
 
             // Adjust our message for another attempt
+            auto old_correlation_id = msg->correlation_id.value();
+
             msg->correlation_id = random_alphanumeric( _correlation_id_len );
             msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
+
+            LOG(debug) << "Resending message (correlation ID: " << old_correlation_id << ") with new correlation ID: "
+               << msg->correlation_id.value() << ", expiration: " << msg->expiration.value();
 
             // Publish another attempt
             if ( _writer_broker->publish( *msg ) != error_code::success )
@@ -264,7 +271,6 @@ void client_impl::timeout_handler( std::shared_future< std::string > future, std
       }
       else
       {
-         // The expected correlation ID did not exist in the promise map... stop the thread
          LOG(warning) << "Correlation ID " << msg->correlation_id.value() << " expected but not found in the promise map";
          return;
       }
@@ -299,10 +305,11 @@ std::shared_future< std::string > client_impl::rpc(
    LOG(debug) << " -> routing_key:    " << msg->routing_key;
    LOG(debug) << " -> content_type:   " << msg->content_type;
    LOG(debug) << " -> reply_to:       " << *msg->reply_to;
-   LOG(debug) << " -> data:           " << msg->data;
 
    if ( msg->expiration.has_value() )
       LOG(debug) << " -> expiration:     " << *msg->expiration;
+
+   LOG(debug) << " -> data:           " << msg->data;
 
    auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
