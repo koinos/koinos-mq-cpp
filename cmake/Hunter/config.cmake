@@ -7,20 +7,20 @@ hunter_config(Boost
 )
 
 hunter_config(koinos_util
-   URL  "https://github.com/koinos/koinos-util-cpp/archive/43280d7adc1f033e42bb2e0d50bb39d31a2dbeaa.tar.gz"
-   SHA1 "5be977696aa13be3d87500b486cd9e6cef0f12a9"
+   URL  "https://github.com/koinos/koinos-util-cpp/archive/32f7589037c6ebcb0c55f2dc558df44ed06176a0.tar.gz"
+   SHA1 "958a61b9316556382ac6300f7a40798c9e375040"
 )
 
 hunter_config(koinos_log
-   URL  "https://github.com/koinos/koinos-log-cpp/archive/5d2d7a185f068f76f80c2335773bfbacdbc3176e.tar.gz"
-   SHA1 "d3a58334b7ff3fc24933fad94921a57c3cd2369f"
+   URL  "https://github.com/koinos/koinos-log-cpp/archive/90b1ea813328a816401e81d8bca68de1e47b7a69.tar.gz"
+   SHA1 "d1b8c3eee49e0a584213f1b15131973057b2c6c8"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_types
-   URL "https://github.com/koinos/koinos-types/archive/89164de74999fbc95562ccf524f01d95aa401937.tar.gz"
-   SHA1 "846eb8340edd72f4c280690a15fb3af1ee0b9bd7"
+   URL  "https://github.com/koinos/koinos-types/archive/2cba96077317075e2f53e8ba268abba16a2c5477.tar.gz"
+   SHA1 "51dae5f5a65a7f08028b9f8d6277680a4c13e3fa"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )

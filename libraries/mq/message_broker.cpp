@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <mutex>
+#include <string>
 
 #include <amqp_tcp_socket.h>
 #include <amqp.h>
@@ -140,6 +141,12 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
    {
       props._flags |= AMQP_BASIC_CORRELATION_ID_FLAG;
       props.correlation_id = amqp_cstring_bytes( msg.correlation_id->c_str() );
+   }
+
+   if ( msg.expiration.has_value() )
+   {
+      props._flags |= AMQP_BASIC_EXPIRATION_FLAG;
+      props.expiration = amqp_cstring_bytes( std::to_string( msg.expiration.value() ).c_str() );
    }
 
    int err = amqp_basic_publish(

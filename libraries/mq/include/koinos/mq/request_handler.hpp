@@ -1,7 +1,6 @@
 #pragma once
 
 #include <koinos/mq/message_broker.hpp>
-#include <koinos/mq/service_name.hpp>
 #include <koinos/log.hpp>
 #include <koinos/util.hpp>
 

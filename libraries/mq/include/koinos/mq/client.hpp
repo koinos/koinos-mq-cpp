@@ -1,7 +1,6 @@
 #pragma once
 
 #include <koinos/mq/message_broker.hpp>
-#include <koinos/mq/service_name.hpp>
 #include <koinos/exception.hpp>
 
 #include <future>
@@ -17,6 +16,12 @@ KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
 KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
 KOINOS_DECLARE_EXCEPTION( timeout_error );
 
+enum class retry_policy
+{
+   none,
+   exponential_backoff
+};
+
 class client final
 {
 public:
@@ -31,8 +36,9 @@ public:
    std::shared_future< std::string > rpc(
       const std::string& service,
       const std::string& payload,
-      const std::string& content_type = "application/json",
-      int64_t timeout_ms = 5000 );
+      uint64_t timeout_ms = 1000,
+      retry_policy policy = retry_policy::exponential_backoff,
+      const std::string& content_type = "application/json" );
 
    void broadcast(
       const std::string& routing_key,
