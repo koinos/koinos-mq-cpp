@@ -39,7 +39,7 @@ public:
 private:
    error_code prepare();
    void consumer( std::shared_ptr< message_broker > broker );
-   void timeout_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
+   void policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
@@ -216,7 +216,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
    }
 }
 
-void client_impl::timeout_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
+void client_impl::policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
 {
    while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready )
    {
@@ -321,7 +321,7 @@ std::shared_future< std::string > client_impl::rpc(
    std::shared_future< std::string > future_val;
    {
       std::lock_guard< std::mutex > guard( _promise_map_mutex );
-      auto empl_res = _promise_map.emplace( *msg->correlation_id, std::move(promise) );
+      auto empl_res = _promise_map.emplace( *msg->correlation_id, std::move( promise ) );
 
       if ( !empl_res.second )
       {
@@ -335,7 +335,7 @@ std::shared_future< std::string > client_impl::rpc(
 
    if ( timeout_ms > 0 )
    {
-      std::thread( &client_impl::timeout_handler, this, future_val, msg, policy ).detach();
+      std::thread( &client_impl::policy_handler, this, future_val, msg, policy ).detach();
    }
 
    return future_val;
