@@ -333,7 +333,7 @@ std::shared_future< std::string > client_impl::rpc(
       future_val = empl_res.first->second.get_future();
    }
 
-   if ( timeout_ms > 0 )
+   if ( msg->expiration.has_value() )
    {
       std::thread( &client_impl::policy_handler, this, future_val, msg, policy ).detach();
    }
