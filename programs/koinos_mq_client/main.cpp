@@ -22,14 +22,14 @@ int main( int argc, char** argv )
 {
    program_options::options_description desc( "Koinos MQ Client options" );
    desc.add_options()
-      ( HELP_OPTION         ",h", "print usage message" )
-      ( AMQP_OPTION         ",a", program_options::value< std::string >()->default_value( "amqp://guest:guest@localhost:5672/" ), "amqp url" )
-      ( BROADCAST_OPTION    ",b", program_options::value< bool        >()->default_value( false ), "broadcast mode" )
-      ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/json" ), "content type of the message" )
-      ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "routing key of the message" )
-      ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 1000 ), "timeout of the message" )
-      ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "payload of the message" )
-      ( LOG_FILTER_OPTION   ",l", program_options::value< log_level   >()->default_value( log_level::info ), "default log filter level" )
+      ( HELP_OPTION         ",h", "Print usage message" )
+      ( AMQP_OPTION         ",a", program_options::value< std::string >()->default_value( "amqp://guest:guest@localhost:5672/" ), "AMQP url" )
+      ( BROADCAST_OPTION    ",b", program_options::value< bool        >()->default_value( false ), "Broadcast mode" )
+      ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/json" ), "Content type of the message" )
+      ( ROUTING_KEY_OPTION  ",r", program_options::value< std::string >()->default_value( "" ), "Routing key of the message" )
+      ( TIMEOUT_OPTION      ",t", program_options::value< uint64_t    >()->default_value( 1000 ), "Timeout of the message" )
+      ( PAYLOAD_OPTION      ",p", program_options::value< std::string >()->default_value( "" ), "Payload of the message" )
+      ( LOG_FILTER_OPTION   ",l", program_options::value< std::string >()->default_value( "info" ), "Default log filter level" )
       ;
 
    program_options::variables_map vm;
@@ -47,7 +47,7 @@ int main( int argc, char** argv )
    std::string routing_key  = vm[ ROUTING_KEY_OPTION ].as< std::string >();
    std::string payload      = vm[ PAYLOAD_OPTION ].as< std::string >();
    uint64_t timeout         = vm[ TIMEOUT_OPTION ].as< uint64_t >();
-   log_level level          = vm[ LOG_FILTER_OPTION ].as< log_level >();
+   std::string level        = vm[ LOG_FILTER_OPTION ].as< std::string >();
 
    initialize_logging( "mq_client", {} /* randomized unique ID */, level );
 
