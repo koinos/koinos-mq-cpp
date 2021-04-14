@@ -316,6 +316,7 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
 
    if ( _on_connect_func( _message_broker ) == error_code::failure )
    {
+      LOG(error) << "Failure during connection callback";
       disconnect();
       return error_code::failure;
    }
@@ -523,21 +524,15 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
             result.first = error_code::time_out;
             return result;
          }
-         else if ( reply.library_error == AMQP_STATUS_HEARTBEAT_TIMEOUT )
+         else
          {
-            LOG(warning) << "Unable to consume message, attempting to reconnect to broker";
+            LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();;
             disconnect();
             if ( connection_loop( _retry_policy ) != error_code::success )
             {
                result.first = error_code::failure;
                return result;
             }
-         }
-         else
-         {
-            LOG(error) << "Unexpected library error: " << error_info( reply ).value();
-            result.first = error_code::failure;
-            return result;
          }
       }
       else if ( AMQP_RESPONSE_NORMAL != reply.reply_type )
