@@ -4,6 +4,7 @@
 #include <koinos/util.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <random>
