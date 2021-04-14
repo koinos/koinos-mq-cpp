@@ -526,24 +526,18 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
          }
          else
          {
-            LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();;
-            disconnect();
-            if ( connection_loop( _retry_policy ) != error_code::success )
-            {
-               result.first = error_code::failure;
-               return result;
-            }
+            LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();
+            disconnect_lockfree();
+            result.first = error_code::failure;
+            return result;
          }
       }
       else if ( AMQP_RESPONSE_NORMAL != reply.reply_type )
       {
          LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();
-         disconnect();
-         if ( connection_loop( _retry_policy ) != error_code::success )
-         {
-            result.first = error_code::failure;
-            return result;
-         }
+         disconnect_lockfree();
+         result.first = error_code::failure;
+         return result;
       }
 
       result.second = std::make_shared< message >();
