@@ -13,6 +13,12 @@
 
 namespace koinos::mq {
 
+enum class retry_policy
+{
+   none,
+   exponential_backoff
+};
+
 enum class error_code : int64_t
 {
    success,
@@ -43,7 +49,14 @@ public:
    message_broker();
    ~message_broker();
 
-   error_code connect( const std::string& url ) noexcept;
+   using on_connect_func = std::function< error_code( message_broker& m ) >;
+
+   error_code connect(
+      const std::string& url,
+      retry_policy p = retry_policy::exponential_backoff,
+      on_connect_func f = []( message_broker& m ){ return error_code::success; }
+   ) noexcept;
+
    void disconnect() noexcept;
    bool is_connected() noexcept;
 

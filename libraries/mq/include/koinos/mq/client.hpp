@@ -16,19 +16,17 @@ KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
 KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
 KOINOS_DECLARE_EXCEPTION( timeout_error );
 
-enum class retry_policy
-{
-   none,
-   exponential_backoff
-};
-
 class client final
 {
 public:
    client();
    ~client();
 
-   error_code connect( const std::string& amqp_url );
+   error_code connect(
+      const std::string& amqp_url,
+      retry_policy policy = retry_policy::exponential_backoff
+   );
+
    void disconnect();
 
    bool is_connected() const;
