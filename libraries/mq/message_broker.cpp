@@ -139,50 +139,57 @@ bool message_broker_impl::is_connected() noexcept
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
 {
-   std::lock_guard< std::mutex > lock( _amqp_mutex );
-
-   amqp_basic_properties_t props;
-
-   props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
-   props.content_type = amqp_cstring_bytes( msg.content_type.c_str() );
-   props.delivery_mode = 2; /* persistent delivery mode */
-
-   if( msg.reply_to.has_value() )
+   if ( !is_connected() )
    {
-      props._flags |= AMQP_BASIC_REPLY_TO_FLAG;
-      props.reply_to = amqp_cstring_bytes( msg.reply_to->c_str() );
-   }
-
-   if( msg.correlation_id.has_value() )
-   {
-      props._flags |= AMQP_BASIC_CORRELATION_ID_FLAG;
-      props.correlation_id = amqp_cstring_bytes( msg.correlation_id->c_str() );
-   }
-
-   if ( msg.expiration.has_value() )
-   {
-      props._flags |= AMQP_BASIC_EXPIRATION_FLAG;
-      props.expiration = amqp_cstring_bytes( std::to_string( msg.expiration.value() ).c_str() );
-   }
-
-   int err = amqp_basic_publish(
-      _connection,
-      _channel,
-      amqp_cstring_bytes( msg.exchange.c_str() ),
-      amqp_cstring_bytes( msg.routing_key.c_str() ),
-      0,
-      0,
-      &props,
-      amqp_cstring_bytes( msg.data.c_str() )
-   );
-
-   if ( err != AMQP_STATUS_OK )
-   {
-      LOG(warning) << "Unable to publish message, attempting to reconnect to broker";
-      disconnect();
-      if ( connection_loop( _retry_policy ) != error_code::success )
+      auto ec = connection_loop( _retry_policy );
+      if ( ec != error_code::success )
       {
          return error_code::failure;
+      }
+   }
+
+   {
+      std::lock_guard< std::mutex > lock( _amqp_mutex );
+
+      amqp_basic_properties_t props;
+
+      props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
+      props.content_type = amqp_cstring_bytes( msg.content_type.c_str() );
+      props.delivery_mode = 2; /* persistent delivery mode */
+
+      if( msg.reply_to.has_value() )
+      {
+         props._flags |= AMQP_BASIC_REPLY_TO_FLAG;
+         props.reply_to = amqp_cstring_bytes( msg.reply_to->c_str() );
+      }
+
+      if( msg.correlation_id.has_value() )
+      {
+         props._flags |= AMQP_BASIC_CORRELATION_ID_FLAG;
+         props.correlation_id = amqp_cstring_bytes( msg.correlation_id->c_str() );
+      }
+
+      if ( msg.expiration.has_value() )
+      {
+         props._flags |= AMQP_BASIC_EXPIRATION_FLAG;
+         props.expiration = amqp_cstring_bytes( std::to_string( msg.expiration.value() ).c_str() );
+      }
+
+      int err = amqp_basic_publish(
+         _connection,
+         _channel,
+         amqp_cstring_bytes( msg.exchange.c_str() ),
+         amqp_cstring_bytes( msg.routing_key.c_str() ),
+         0,
+         0,
+         &props,
+         amqp_cstring_bytes( msg.data.c_str() )
+      );
+
+      if ( err != AMQP_STATUS_OK )
+      {
+         LOG(warning) << "Unable to publish message, attempting to reconnect to broker";
+         disconnect_lockfree();
       }
    }
 
