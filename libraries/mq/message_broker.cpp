@@ -306,7 +306,7 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
             break;
 
          case retry_policy::exponential_backoff:
-            LOG(info) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << " ms" ;
+            LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
             std::this_thread::sleep_for( std::chrono::milliseconds( amqp_sleep_ms ) );
             amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
             break;

@@ -296,6 +296,13 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
 {
    while ( true )
    {
+      if ( !broker->is_connected() )
+      {
+         LOG(warning) << "Connection to AMQP lost, could not consume message, retrying in 1s";
+         std::this_thread::sleep_for( std::chrono::milliseconds( 1000 ) );
+         continue;
+      }
+
       auto result = broker->consume();
 
       if ( result.first == error_code::time_out )

@@ -226,7 +226,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
             return;
          case retry_policy::exponential_backoff:
             LOG(warning) << "No response to message with correlation ID: "
-               << msg->correlation_id.value() << ", within " << msg->expiration.value() << " ms";
+               << msg->correlation_id.value() << ", within " << msg->expiration.value() << "ms";
 
             LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
             LOG(debug) << " -> exchange:       " << msg->exchange;
