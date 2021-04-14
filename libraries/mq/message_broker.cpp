@@ -111,21 +111,21 @@ void message_broker_impl::disconnect_lockfree() noexcept
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( r ).value();
+      LOG(debug) << "Tried to close channel: " << error_info( r ).value();
    }
 
    r = amqp_connection_close( _connection, AMQP_REPLY_SUCCESS );
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( r ).value();
+      LOG(debug) << "Tried to close connection: " << error_info( r ).value();
    }
 
    int err = amqp_destroy_connection( _connection );
 
    if ( err != AMQP_STATUS_OK )
    {
-      LOG(error) << amqp_error_string2( err );
+      LOG(debug) << "Tried to destroy connection: " << amqp_error_string2( err );
    }
 
    _connection = nullptr;
@@ -233,7 +233,7 @@ error_code message_broker_impl::connect_lockfree(
       vhost.c_str(),
       AMQP_DEFAULT_MAX_CHANNELS,
       AMQP_DEFAULT_FRAME_SIZE,
-      60 /* seconds between heartbeat frames */,
+      0 /* seconds between heartbeat frames */,
       AMQP_SASL_METHOD_PLAIN,
       user.c_str(),
       pass.c_str()

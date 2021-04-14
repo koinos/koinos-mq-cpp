@@ -42,34 +42,57 @@ private:
    void consumer( std::shared_ptr< message_broker > broker );
    void policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
 
+   void set_queue_name( const std::string& s );
+   std::string get_queue_name();
+
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
 
-   std::string                                          _amqp_url;
-   std::shared_ptr< message_broker >                    _broker;
-   std::unique_ptr< std::thread >                       _reader_thread;
    std::string                                          _queue_name;
+   std::mutex                                           _queue_name_mutex;
+
+   std::shared_ptr< message_broker >                    _writer_broker;
+   std::shared_ptr< message_broker >                    _reader_broker;
+   std::unique_ptr< std::thread >                       _reader_thread;
    std::atomic< bool >                                  _running   = true;
    bool                                                 _connected = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
 };
 
-client_impl::client_impl() : _broker( std::make_unique< message_broker >() ) {}
+client_impl::client_impl() :
+   _writer_broker( std::make_unique< message_broker >() ),
+   _reader_broker( std::make_unique< message_broker >() ) {}
 
 client_impl::~client_impl()
 {
    disconnect();
 }
 
+void client_impl::set_queue_name( const std::string& s )
+{
+   std::lock_guard< std::mutex > lock( _queue_name_mutex );
+   _queue_name = s;
+}
+
+std::string client_impl::get_queue_name()
+{
+   std::lock_guard< std::mutex > lock( _queue_name_mutex );
+   return _queue_name;
+}
 error_code client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    error_code ec;
 
-   _amqp_url = amqp_url;
+   ec = _writer_broker->connect( amqp_url, policy );
 
-   ec = _broker->connect(
-      _amqp_url,
+   if ( ec != error_code::success )
+   {
+      return ec;
+   }
+
+   ec = _reader_broker->connect(
+      amqp_url,
       policy,
       [this]( message_broker& m ) -> error_code
       {
@@ -79,12 +102,13 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
 
    if ( ec != error_code::success )
    {
+      _writer_broker->disconnect();
       return ec;
    }
 
    _reader_thread = std::make_unique< std::thread >( [&]()
    {
-      consumer( _broker );
+      consumer( _reader_broker );
    } );
 
    _connected = true;
@@ -99,8 +123,11 @@ void client_impl::disconnect()
    if ( _reader_thread )
       _reader_thread->join();
 
-   if ( _broker->is_connected() )
-      _broker->disconnect();
+   if ( _writer_broker->is_connected() )
+      _writer_broker->disconnect();
+
+   if ( _reader_broker->is_connected() )
+      _reader_broker->disconnect();
 
    _connected = false;
 }
@@ -158,7 +185,7 @@ error_code client_impl::on_connect( message_broker& m )
       return queue_res.first;
    }
 
-   _queue_name = queue_res.second;
+   set_queue_name( queue_res.second );
 
    ec = m.bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
@@ -174,7 +201,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 {
    while ( _running )
    {
-      auto result = _broker->consume();
+      auto result = _reader_broker->consume();
 
       if ( result.first == error_code::time_out )
       {
@@ -242,12 +269,13 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
 
             msg->correlation_id = random_alphanumeric( _correlation_id_len );
             msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
+            msg->reply_to       = get_queue_name();
 
             LOG(debug) << "Resending message (correlation ID: " << old_correlation_id << ") with new correlation ID: "
                << msg->correlation_id.value() << ", expiration: " << msg->expiration.value();
 
             // Publish another attempt
-            if ( _broker->publish( *msg ) != error_code::success )
+            if ( _writer_broker->publish( *msg ) != error_code::success )
             {
                node_handle.mapped().set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
                return;
@@ -289,7 +317,7 @@ std::shared_future< std::string > client_impl::rpc(
    msg->routing_key = service_routing_key( service );
    msg->content_type = content_type;
    msg->data = payload;
-   msg->reply_to = _queue_name;
+   msg->reply_to = get_queue_name();
    msg->correlation_id = random_alphanumeric( _correlation_id_len );
 
    if ( timeout_ms > 0 )
@@ -307,7 +335,7 @@ std::shared_future< std::string > client_impl::rpc(
 
    LOG(debug) << " -> data:           " << msg->data;
 
-   auto err = _broker->publish( *msg );
+   auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
    {
       promise.set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
@@ -341,7 +369,7 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
 {
    KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
 
-   auto err = _broker->publish( message {
+   auto err = _writer_broker->publish( message {
       .exchange     = exchange::event,
       .routing_key  = routing_key,
       .content_type = content_type,
