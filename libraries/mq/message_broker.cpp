@@ -21,7 +21,7 @@ namespace detail {
 class message_broker_impl final
 {
 private:
-   amqp_connection_info            _connection_info;
+   std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
    std::mutex                      _amqp_mutex;
@@ -266,17 +266,7 @@ error_code message_broker_impl::connect(
 {
    _on_connect_func = f;
    _retry_policy = p;
-
-   std::vector< char > tmp_url( url.begin(), url.end() );
-   tmp_url.push_back( '\0' );
-
-   auto result = amqp_parse_url( tmp_url.data(), &_connection_info );
-
-   if( result != AMQP_STATUS_OK )
-   {
-      LOG(error) << "Unable to parse provided AMQP url";
-      return error_code::failure;
-   }
+   _amqp_url = url;
 
    if ( connection_loop( _retry_policy ) != error_code::success )
    {
@@ -288,6 +278,18 @@ error_code message_broker_impl::connect(
 
 error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
 {
+   std::vector< char > tmp_url( _amqp_url.begin(), _amqp_url.end() );
+   tmp_url.push_back( '\0' );
+
+   amqp_connection_info cinfo;
+   auto result = amqp_parse_url( tmp_url.data(), &cinfo );
+
+   if( result != AMQP_STATUS_OK )
+   {
+      LOG(error) << "Unable to parse provided AMQP url";
+      return error_code::failure;
+   }
+
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
 
@@ -296,11 +298,11 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
       while ( !_connection )
       {
          auto result = connect_lockfree(
-            std::string( _connection_info.host ),
-            uint16_t( _connection_info.port ),
-            std::string( "/" ) + _connection_info.vhost,
-            std::string( _connection_info.user ),
-            std::string( _connection_info.password )
+            std::string( cinfo.host ),
+            uint16_t( cinfo.port ),
+            std::string( "/" ) + cinfo.vhost,
+            std::string( cinfo.user ),
+            std::string( cinfo.password )
          );
 
          if ( result == error_code::success )
