@@ -135,6 +135,7 @@ error_code request_handler::on_connect( message_broker& m )
    error_code ec;
 
    _queue_bindings.clear();
+   _handler_map.clear();
 
    for ( const auto& msg_handler : _message_handlers )
    {

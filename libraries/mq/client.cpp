@@ -210,20 +210,20 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "Failed to consume message";
+         LOG(warning) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "Consumption succeeded but resulted in an empty message";
+         LOG(warning) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
 
       auto& msg = result.second;
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(error) << "Received message without a correlation id";
+         LOG(warning) << "Received message without a correlation id";
          continue;
       }
 

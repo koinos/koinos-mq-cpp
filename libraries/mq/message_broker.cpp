@@ -146,6 +146,10 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
       {
          return error_code::failure;
       }
+      else
+      {
+         LOG(info) << "Reestablished AMQP server connection";
+      }
    }
 
    {
@@ -212,7 +216,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( !socket )
    {
-      LOG(error) << "Failed to create socket";
+      LOG(debug) << "Failed to create socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -221,7 +225,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( err != AMQP_STATUS_OK )
    {
-      LOG(error) << "Failed to open socket";
+      LOG(debug) << "Failed to open socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -241,7 +245,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( r ).value();
+      LOG(debug) << error_info( r ).value();
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -251,7 +255,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( r ).value();
+      LOG(debug) << error_info( r ).value();
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -511,6 +515,10 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
       {
          result.first = error_code::failure;
          return result;
+      }
+      else
+      {
+         LOG(info) << "Reestablished AMQP server connection";
       }
    }
 
