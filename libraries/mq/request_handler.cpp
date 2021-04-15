@@ -309,13 +309,13 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "Failed to consume message";
+         LOG(warning) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "Consumption succeeded but resulted in an empty message";
+         LOG(warning) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
 
