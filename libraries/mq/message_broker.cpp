@@ -141,6 +141,7 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
 {
    if ( !is_connected() )
    {
+      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
       auto ec = connection_loop( _retry_policy );
       if ( ec != error_code::success )
       {
@@ -192,8 +193,9 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
 
       if ( err != AMQP_STATUS_OK )
       {
-         LOG(warning) << "Unable to publish message, attempting to reconnect to broker";
+         LOG(warning) << "Failed to publish message";
          disconnect_lockfree();
+         return error_code::failure;
       }
    }
 
@@ -510,6 +512,7 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 
    if ( !is_connected() )
    {
+      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
       auto ec = connection_loop( _retry_policy );
       if ( ec != error_code::success )
       {
@@ -543,7 +546,7 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
          }
          else
          {
-            LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();
+            LOG(debug) << "Unable to consume message: " << error_info( reply ).value();
             disconnect_lockfree();
             result.first = error_code::failure;
             return result;
@@ -551,7 +554,7 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
       }
       else if ( AMQP_RESPONSE_NORMAL != reply.reply_type )
       {
-         LOG(warning) << "Unable to consume message, attempting to reconnect to broker: " << error_info( reply ).value();
+         LOG(debug) << "Unable to consume message: " << error_info( reply ).value();
          disconnect_lockfree();
          result.first = error_code::failure;
          return result;
