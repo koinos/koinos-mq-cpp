@@ -233,6 +233,8 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
             disconnect_lockfree();
             return error_code::failure;
          }
+
+         return error_code::success;
       });
    }, "AMQP publish" );
 }
