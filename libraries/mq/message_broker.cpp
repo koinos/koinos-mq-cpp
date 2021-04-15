@@ -165,7 +165,8 @@ error_code message_broker_impl::with_connection( std::function< error_code(void)
 error_code message_broker_impl::with_policy( retry_policy p, std::function< error_code(void) > f, const std::string& s )
 {
    uint64_t amqp_sleep_ms = 1000;
-   while ( f() != error_code::success )
+   error_code code;
+   while ( (code = f()) == error_code::failure )
    {
       switch ( p )
       {
@@ -174,14 +175,14 @@ error_code message_broker_impl::with_policy( retry_policy p, std::function< erro
          break;
 
       case retry_policy::exponential_backoff:
-         LOG(warning) << "Failed while executing " << s << " with retry policy, trying again in " << amqp_sleep_ms << " ms" ;
+         LOG(warning) << "Failed while executing " << s << ", trying again in " << amqp_sleep_ms << "ms" ;
          std::this_thread::sleep_for( std::chrono::milliseconds( amqp_sleep_ms ) );
          amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
          break;
       }
    }
 
-   return error_code::success;
+   return code;
 }
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
@@ -229,7 +230,7 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
 
          if ( err != AMQP_STATUS_OK )
          {
-            LOG(warning) << "Failed to publish message";
+            LOG(debug) << "Failed to publish message";
             disconnect_lockfree();
             return error_code::failure;
          }
@@ -533,80 +534,83 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 {
    std::pair< error_code, std::shared_ptr< message > > result;
 
-   result.first = with_connection( [&]() -> error_code
+   result.first = with_policy( _retry_policy, [&]() -> error_code
    {
-      std::lock_guard< std::mutex > lock( _amqp_mutex );
-
-      amqp_envelope_t envelope;
-
-      amqp_maybe_release_buffers( _connection );
-
-      timeval tv;
-      tv.tv_sec = 1;
-      tv.tv_usec = 0;
-      auto reply = amqp_consume_message( _connection, &envelope, &tv, 0 );
-
-      if ( reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
+      return with_connection( [&]() -> error_code
       {
-         if ( reply.library_error == AMQP_STATUS_TIMEOUT )
+         std::lock_guard< std::mutex > lock( _amqp_mutex );
+
+         amqp_envelope_t envelope;
+
+         amqp_maybe_release_buffers( _connection );
+
+         timeval tv;
+         tv.tv_sec = 1;
+         tv.tv_usec = 0;
+         auto reply = amqp_consume_message( _connection, &envelope, &tv, 0 );
+
+         if ( reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
          {
-            return error_code::time_out;
+            if ( reply.library_error == AMQP_STATUS_TIMEOUT )
+            {
+               return error_code::time_out;
+            }
+            else
+            {
+               LOG(debug) << "Unable to consume message: " << error_info( reply ).value();
+               disconnect_lockfree();
+               return error_code::failure;
+            }
          }
-         else
+         else if ( AMQP_RESPONSE_NORMAL != reply.reply_type )
          {
             LOG(debug) << "Unable to consume message: " << error_info( reply ).value();
             disconnect_lockfree();
             return error_code::failure;
          }
-      }
-      else if ( AMQP_RESPONSE_NORMAL != reply.reply_type )
-      {
-         LOG(debug) << "Unable to consume message: " << error_info( reply ).value();
-         disconnect_lockfree();
-         return error_code::failure;
-      }
 
-      result.second = std::make_shared< message >();
+         result.second = std::make_shared< message >();
 
-      message& msg = *result.second;
+         message& msg = *result.second;
 
-      msg.delivery_tag = envelope.delivery_tag;
-      msg.exchange = std::string( (char*) envelope.exchange.bytes, (std::size_t) envelope.exchange.len );
-      msg.routing_key = std::string( (char*) envelope.routing_key.bytes, (std::size_t) envelope.routing_key.len );
+         msg.delivery_tag = envelope.delivery_tag;
+         msg.exchange = std::string( (char*) envelope.exchange.bytes, (std::size_t) envelope.exchange.len );
+         msg.routing_key = std::string( (char*) envelope.routing_key.bytes, (std::size_t) envelope.routing_key.len );
 
-      if ( envelope.message.properties._flags & AMQP_BASIC_CONTENT_TYPE_FLAG )
-      {
-         msg.content_type = std::string(
-            (char*) envelope.message.properties.content_type.bytes,
-            (std::size_t) envelope.message.properties.content_type.len
+         if ( envelope.message.properties._flags & AMQP_BASIC_CONTENT_TYPE_FLAG )
+         {
+            msg.content_type = std::string(
+               (char*) envelope.message.properties.content_type.bytes,
+               (std::size_t) envelope.message.properties.content_type.len
+            );
+         }
+
+         if ( envelope.message.properties._flags & AMQP_BASIC_REPLY_TO_FLAG )
+         {
+            msg.reply_to = std::string(
+               (char*) envelope.message.properties.reply_to.bytes,
+               (std::size_t) envelope.message.properties.reply_to.len
+            );
+         }
+
+         if ( envelope.message.properties._flags & AMQP_BASIC_CORRELATION_ID_FLAG )
+         {
+            msg.correlation_id = std::string(
+               (char*) envelope.message.properties.correlation_id.bytes,
+               (std::size_t) envelope.message.properties.correlation_id.len
+            );
+         }
+
+         msg.data = std::string(
+            (char*) envelope.message.body.bytes,
+            (std::size_t) envelope.message.body.len
          );
-      }
 
-      if ( envelope.message.properties._flags & AMQP_BASIC_REPLY_TO_FLAG )
-      {
-         msg.reply_to = std::string(
-            (char*) envelope.message.properties.reply_to.bytes,
-            (std::size_t) envelope.message.properties.reply_to.len
-         );
-      }
+         amqp_destroy_envelope( &envelope );
 
-      if ( envelope.message.properties._flags & AMQP_BASIC_CORRELATION_ID_FLAG )
-      {
-         msg.correlation_id = std::string(
-            (char*) envelope.message.properties.correlation_id.bytes,
-            (std::size_t) envelope.message.properties.correlation_id.len
-         );
-      }
-
-      msg.data = std::string(
-         (char*) envelope.message.body.bytes,
-         (std::size_t) envelope.message.body.len
-      );
-
-      amqp_destroy_envelope( &envelope );
-
-      return error_code::success;
-   } );
+         return error_code::success;
+      } );
+   }, "AMQP consume" );
 
    return result;
 }
