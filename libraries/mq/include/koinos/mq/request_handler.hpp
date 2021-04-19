@@ -26,6 +26,15 @@ using msg_routing_map = boost::container::flat_map< std::pair< std::string, std:
 using binding_queue_map = boost::container::flat_map< std::pair< std::string, std::string >, std::string >;
 using synced_msg_queue = boost::concurrent::sync_bounded_queue< std::shared_ptr< message > >;
 
+struct message_handler
+{
+   const std::string exchange;
+   const std::string routing_key;
+   bool competing_consumer;
+   handler_verify_func verify;
+   msg_handler_func handler;
+};
+
 constexpr std::size_t MAX_QUEUE_SIZE = 1024;
 
 class request_handler : public std::enable_shared_from_this< request_handler >
@@ -36,7 +45,7 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
       void start();
       void stop();
-      error_code connect( const std::string& amqp_url );
+      error_code connect( const std::string& amqp_url, retry_policy = retry_policy::exponential_backoff );
 
       error_code add_broadcast_handler(
          const std::string& routing_key,
@@ -55,6 +64,8 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       void publisher(
          std::shared_ptr< message_broker > publisher_broker,
          std::shared_ptr< message_broker > consumer_broker );
+
+      error_code on_connect( message_broker& m );
 
       error_code add_msg_handler(
          const std::string& exchange,
@@ -85,6 +96,8 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
       synced_msg_queue                  _input_queue{ MAX_QUEUE_SIZE };
       synced_msg_queue                  _output_queue{ MAX_QUEUE_SIZE };
+
+      std::vector< message_handler >    _message_handlers;
 };
 
 } // koinos::mq

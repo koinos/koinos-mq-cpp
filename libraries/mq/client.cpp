@@ -4,6 +4,7 @@
 #include <koinos/util.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <random>
@@ -19,7 +20,7 @@ public:
    client_impl();
    ~client_impl();
 
-   error_code connect( const std::string& amqp_url );
+   error_code connect( const std::string& amqp_url, retry_policy policy );
    void disconnect();
 
    bool is_connected() const;
@@ -37,18 +38,22 @@ public:
       const std::string& content_type );
 
 private:
-   error_code prepare();
+   error_code on_connect( message_broker& m );
    void consumer( std::shared_ptr< message_broker > broker );
    void policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
+
+   void set_queue_name( const std::string& s );
+   std::string get_queue_name();
 
    std::map< std::string, std::promise< std::string > > _promise_map;
    std::mutex                                           _promise_map_mutex;
 
-   std::shared_ptr< message_broker >                    _writer_broker;
-
-   std::unique_ptr< std::thread >                       _reader_thread;
-   std::shared_ptr< message_broker >                    _reader_broker;
    std::string                                          _queue_name;
+   std::mutex                                           _queue_name_mutex;
+
+   std::shared_ptr< message_broker >                    _writer_broker;
+   std::shared_ptr< message_broker >                    _reader_broker;
+   std::unique_ptr< std::thread >                       _reader_thread;
    std::atomic< bool >                                  _running   = true;
    bool                                                 _connected = false;
    static constexpr uint64_t                            _max_expiration = 30000;
@@ -64,22 +69,40 @@ client_impl::~client_impl()
    disconnect();
 }
 
-error_code client_impl::connect( const std::string& amqp_url )
+void client_impl::set_queue_name( const std::string& s )
+{
+   std::lock_guard< std::mutex > lock( _queue_name_mutex );
+   _queue_name = s;
+}
+
+std::string client_impl::get_queue_name()
+{
+   std::lock_guard< std::mutex > lock( _queue_name_mutex );
+   return _queue_name;
+}
+error_code client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    error_code ec;
 
-   ec = _writer_broker->connect( amqp_url );
-   if ( ec != error_code::success )
-      return ec;
+   ec = _writer_broker->connect( amqp_url, policy );
 
-   ec = _reader_broker->connect( amqp_url );
-   if ( ec != error_code::success )
-      return ec;
-
-   ec = prepare();
    if ( ec != error_code::success )
    {
-      disconnect();
+      return ec;
+   }
+
+   ec = _reader_broker->connect(
+      amqp_url,
+      policy,
+      [this]( message_broker& m ) -> error_code
+      {
+         return this->on_connect( m );
+      }
+   );
+
+   if ( ec != error_code::success )
+   {
+      _writer_broker->disconnect();
       return ec;
    }
 
@@ -114,11 +137,11 @@ bool client_impl::is_connected() const
    return _connected;
 }
 
-error_code client_impl::prepare()
+error_code client_impl::on_connect( message_broker& m )
 {
    error_code ec;
 
-   ec = _reader_broker->declare_exchange(
+   ec = m.declare_exchange(
       exchange::event,      // Name
       exchange_type::topic, // Type
       false,                // Passive
@@ -133,7 +156,7 @@ error_code client_impl::prepare()
       return ec;
    }
 
-   ec = _reader_broker->declare_exchange(
+   ec = m.declare_exchange(
       exchange::rpc,         // Name
       exchange_type::direct, // Type
       false,                 // Passive
@@ -148,7 +171,7 @@ error_code client_impl::prepare()
       return ec;
    }
 
-   auto queue_res = _reader_broker->declare_queue(
+   auto queue_res = m.declare_queue(
       "",
       false, // Passive
       false, // Durable
@@ -162,9 +185,9 @@ error_code client_impl::prepare()
       return queue_res.first;
    }
 
-   _queue_name = queue_res.second;
+   set_queue_name( queue_res.second );
 
-   ec = _reader_broker->bind_queue( queue_res.second, exchange::rpc, queue_res.second );
+   ec = m.bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
       LOG(error) << "Error while binding temporary queue";
@@ -187,20 +210,20 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
       if ( result.first != error_code::success )
       {
-         LOG(error) << "Failed to consume message";
+         LOG(warning) << "Failed to consume message";
          continue;
       }
 
       if ( !result.second )
       {
-         LOG(error) << "Consumption succeeded but resulted in an empty message";
+         LOG(warning) << "Consumption succeeded but resulted in an empty message";
          continue;
       }
 
       auto& msg = result.second;
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(error) << "Received message without a correlation id";
+         LOG(warning) << "Received message without a correlation id";
          continue;
       }
 
@@ -246,6 +269,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
 
             msg->correlation_id = random_alphanumeric( _correlation_id_len );
             msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
+            msg->reply_to       = get_queue_name();
 
             LOG(debug) << "Resending message (correlation ID: " << old_correlation_id << ") with new correlation ID: "
                << msg->correlation_id.value() << ", expiration: " << msg->expiration.value();
@@ -293,7 +317,7 @@ std::shared_future< std::string > client_impl::rpc(
    msg->routing_key = service_routing_key( service );
    msg->content_type = content_type;
    msg->data = payload;
-   msg->reply_to = _queue_name;
+   msg->reply_to = get_queue_name();
    msg->correlation_id = random_alphanumeric( _correlation_id_len );
 
    if ( timeout_ms > 0 )
@@ -360,9 +384,9 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
 client::client() : _my( std::make_unique< detail::client_impl >() ) {}
 client::~client() = default;
 
-error_code client::connect( const std::string& amqp_url )
+error_code client::connect( const std::string& amqp_url, retry_policy policy )
 {
-   return _my->connect( amqp_url );
+   return _my->connect( amqp_url, policy );
 }
 
 std::shared_future< std::string > client::rpc(
