@@ -50,13 +50,13 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       error_code add_broadcast_handler(
          const std::string& routing_key,
          msg_handler_void_func func,
-         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/json"; }
+         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/octet-stream"; }
       );
 
       error_code add_rpc_handler(
          const std::string& service,
          msg_handler_string_func func,
-         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/json"; }
+         handler_verify_func = []( const std::string& content_type ) { return content_type == "application/octet-stream"; }
       );
 
    private:
