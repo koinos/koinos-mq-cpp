@@ -180,6 +180,10 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
          props.expiration = amqp_cstring_bytes( std::to_string( msg.expiration.value() ).c_str() );
       }
 
+      amqp_bytes_t data;
+      data.bytes = (void*)msg.data.c_str();
+      data.len   = msg.data.size();
+
       int err = amqp_basic_publish(
          _connection,
          _channel,
@@ -188,7 +192,7 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
          0,
          0,
          &props,
-         amqp_cstring_bytes( msg.data.c_str() )
+         data
       );
 
       if ( err != AMQP_STATUS_OK )
