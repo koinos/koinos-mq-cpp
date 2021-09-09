@@ -36,12 +36,12 @@ public:
       const std::string& payload,
       uint64_t timeout_ms = 1000,
       retry_policy policy = retry_policy::exponential_backoff,
-      const std::string& content_type = "application/json" );
+      const std::string& content_type = "application/octet-stream" );
 
    void broadcast(
       const std::string& routing_key,
       const std::string& payload,
-      const std::string& content_type = "application/json" );
+      const std::string& content_type = "application/octet-stream" );
 private:
    std::unique_ptr< detail::client_impl > _my;
 };
