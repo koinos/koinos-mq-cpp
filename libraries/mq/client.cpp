@@ -262,7 +262,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
             LOG(debug) << " -> content_type:   " << msg->content_type;
             LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
             LOG(debug) << " -> expiration:     " << msg->expiration.value();
-            LOG(debug) << " -> data:           " << msg->data;
+            LOG(debug) << " -> data:           " << to_hex( msg->data );
 
             // Adjust our message for another attempt
             auto old_correlation_id = msg->correlation_id.value();
@@ -333,7 +333,7 @@ std::shared_future< std::string > client_impl::rpc(
    if ( msg->expiration.has_value() )
       LOG(debug) << " -> expiration:     " << *msg->expiration;
 
-   LOG(debug) << " -> data:           " << msg->data;
+   LOG(debug) << " -> data:           " << to_hex( msg->data );
 
    auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )

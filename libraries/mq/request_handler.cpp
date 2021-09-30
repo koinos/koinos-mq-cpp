@@ -332,7 +332,7 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
          LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
 
       LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
-      LOG(debug) << " -> data:           " << result.second->data;
+      LOG(debug) << " -> data:           " << to_hex( result.second->data );
 
       try
       {
