@@ -95,6 +95,7 @@ void request_handler::start()
 void request_handler::stop()
 {
    _input_queue.close();
+   _consumer_broker->disconnect();
    if ( _consumer_thread )
       _consumer_thread->join();
 
@@ -103,6 +104,7 @@ void request_handler::stop()
    _consumer_pool.clear();
 
    _output_queue.close();
+   _publisher_broker->disconnect();
    if ( _publisher_thread )
       _publisher_thread->join();
 }

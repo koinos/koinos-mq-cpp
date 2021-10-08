@@ -22,7 +22,7 @@ namespace detail {
 class message_broker_impl final
 {
 private:
-   std::atomic< bool >             _running = true;
+   std::atomic< bool >             _running = false;
    std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
@@ -95,12 +95,12 @@ message_broker_impl::message_broker_impl( message_broker& m ) : _message_broker(
 
 message_broker_impl::~message_broker_impl()
 {
-   _running = false;
    disconnect();
 }
 
 void message_broker_impl::disconnect() noexcept
 {
+   _running = false;
    std::lock_guard< std::mutex > lock( _amqp_mutex );
    disconnect_lockfree();
 }
@@ -280,6 +280,7 @@ error_code message_broker_impl::connect(
    _on_connect_func = f;
    _retry_policy = p;
    _amqp_url = url;
+   _running = true;
 
    if ( connection_loop( _retry_policy ) != error_code::success )
    {
@@ -339,7 +340,8 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
    if ( _on_connect_func( _message_broker ) == error_code::failure )
    {
       LOG(error) << "Failure during connection callback";
-      disconnect();
+      std::lock_guard< std::mutex > lock( _amqp_mutex );
+      disconnect_lockfree();
       return error_code::failure;
    }
 
