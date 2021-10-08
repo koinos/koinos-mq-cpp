@@ -139,7 +139,7 @@ void client_impl::disconnect()
       std::lock_guard< std::mutex > lock( _promise_map_mutex );
       for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
       {
-         it->second.set_value( "" );
+         it->second.set_value( std::string{} );
          _promise_map.erase( it );
       }
    }
