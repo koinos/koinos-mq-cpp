@@ -56,7 +56,7 @@ private:
    std::shared_ptr< message_broker >                    _writer_broker;
    std::shared_ptr< message_broker >                    _reader_broker;
    std::unique_ptr< std::thread >                       _reader_thread;
-   std::atomic< bool >                                  _running   = true;
+   std::atomic< bool >                                  _running   = false;
    std::atomic< bool >                                  _connected = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
@@ -68,8 +68,6 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
-   _running = false;
-
    disconnect();
 
    // Upon destruction, we have outstanding futures being handled by the policy handler
@@ -127,6 +125,7 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
       consumer( _reader_broker );
    } );
 
+   _running = true;
    _connected = true;
 
    return error_code::success;
@@ -134,6 +133,8 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
 
 void client_impl::disconnect()
 {
+   _running = false;
+
    if ( _reader_thread )
       _reader_thread->join();
 
@@ -213,7 +214,7 @@ error_code client_impl::on_connect( message_broker& m )
 
 void client_impl::consumer( std::shared_ptr< message_broker > broker )
 {
-   while ( _connected )
+   while ( _running )
    {
       auto result = _reader_broker->consume();
 
