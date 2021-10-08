@@ -67,7 +67,7 @@ int main( int argc, char** argv )
       }
       else
       {
-         auto r = c.rpc( routing_key, payload, timeout, mq::retry_policy::exponential_backoff, content_type );
+         auto r = c.rpc( routing_key, payload, std::chrono::milliseconds( timeout ), mq::retry_policy::exponential_backoff, content_type );
          std::cout << r.get() << std::endl;
       }
    }

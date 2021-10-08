@@ -3,6 +3,7 @@
 #include <koinos/mq/message_broker.hpp>
 #include <koinos/exception.hpp>
 
+#include <chrono>
 #include <future>
 #include <memory>
 #include <string>
@@ -34,7 +35,7 @@ public:
    std::shared_future< std::string > rpc(
       const std::string& service,
       const std::string& payload,
-      uint64_t timeout_ms = 1000,
+      std::chrono::milliseconds timeout = std::chrono::milliseconds( 1000 ),
       retry_policy policy = retry_policy::exponential_backoff,
       const std::string& content_type = "application/octet-stream" );
 

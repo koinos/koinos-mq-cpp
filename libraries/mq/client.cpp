@@ -10,6 +10,8 @@
 #include <random>
 #include <thread>
 
+using namespace std::chrono_literals;
+
 namespace koinos::mq {
 
 namespace detail {
@@ -28,7 +30,7 @@ public:
    std::shared_future< std::string > rpc(
       const std::string& service,
       const std::string& payload,
-      uint64_t timeout_ms,
+      std::chrono::milliseconds timeout,
       retry_policy policy,
       const std::string& content_type );
 
@@ -55,7 +57,7 @@ private:
    std::shared_ptr< message_broker >                    _reader_broker;
    std::unique_ptr< std::thread >                       _reader_thread;
    std::atomic< bool >                                  _running   = true;
-   bool                                                 _connected = false;
+   std::atomic< bool >                                  _connected = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
 };
@@ -130,6 +132,17 @@ void client_impl::disconnect()
       _reader_broker->disconnect();
 
    _connected = false;
+
+   // Upon disconnect, we have outstanding futures being handled by the policy handler
+   // threads. We can have them clean themselves up by setting the future value.
+   {
+      std::lock_guard< std::mutex > lock( _promise_map_mutex );
+      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
+      {
+         it->second.set_value( "" );
+         _promise_map.erase( it );
+      }
+   }
 }
 
 bool client_impl::is_connected() const
@@ -241,7 +254,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
 void client_impl::policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
 {
-   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready )
+   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready && is_connected() )
    {
       std::lock_guard< std::mutex > guard( _promise_map_mutex );
       auto node_handle = _promise_map.extract( msg->correlation_id.value() );
@@ -304,7 +317,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
 std::shared_future< std::string > client_impl::rpc(
    const std::string& service,
    const std::string& payload,
-   uint64_t timeout_ms,
+   std::chrono::milliseconds timeout,
    retry_policy policy,
    const std::string& content_type )
 {
@@ -320,8 +333,8 @@ std::shared_future< std::string > client_impl::rpc(
    msg->reply_to = get_queue_name();
    msg->correlation_id = random_alphanumeric( _correlation_id_len );
 
-   if ( timeout_ms > 0 )
-      msg->expiration = timeout_ms;
+   if ( timeout.count() > 0 )
+      msg->expiration = timeout.count();
 
    LOG(debug) << "Sending RPC";
    LOG(debug) << " -> correlation_id: " << *msg->correlation_id;
@@ -392,11 +405,11 @@ error_code client::connect( const std::string& amqp_url, retry_policy policy )
 std::shared_future< std::string > client::rpc(
    const std::string& service,
    const std::string& payload,
-   uint64_t timeout_ms,
+   std::chrono::milliseconds timeout,
    retry_policy policy,
    const std::string& content_type )
 {
-   return _my->rpc( service, payload, timeout_ms, policy, content_type );
+   return _my->rpc( service, payload, timeout, policy, content_type );
 }
 
 void client::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
