@@ -69,17 +69,6 @@ client_impl::client_impl() :
 client_impl::~client_impl()
 {
    disconnect();
-
-   // Upon destruction, we have outstanding futures being handled by the policy handler
-   // threads. We can have them clean themselves up by setting the future value.
-   {
-      std::lock_guard< std::mutex > lock( _promise_map_mutex );
-      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
-      {
-         it->second.set_value( std::string{} );
-         _promise_map.erase( it );
-      }
-   }
 }
 
 void client_impl::set_queue_name( const std::string& s )
@@ -97,6 +86,8 @@ std::string client_impl::get_queue_name()
 error_code client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    error_code ec;
+
+   _running = true;
 
    ec = _writer_broker->connect( amqp_url, policy );
 
@@ -125,7 +116,6 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
       consumer( _reader_broker );
    } );
 
-   _running = true;
    _connected = true;
 
    return error_code::success;
