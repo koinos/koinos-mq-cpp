@@ -68,7 +68,20 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
+   _running = false;
+
    disconnect();
+
+   // Upon destruction, we have outstanding futures being handled by the policy handler
+   // threads. We can have them clean themselves up by setting the future value.
+   {
+      std::lock_guard< std::mutex > lock( _promise_map_mutex );
+      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
+      {
+         it->second.set_value( std::string{} );
+         _promise_map.erase( it );
+      }
+   }
 }
 
 void client_impl::set_queue_name( const std::string& s )
@@ -82,6 +95,7 @@ std::string client_impl::get_queue_name()
    std::lock_guard< std::mutex > lock( _queue_name_mutex );
    return _queue_name;
 }
+
 error_code client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    error_code ec;
@@ -120,8 +134,6 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
 
 void client_impl::disconnect()
 {
-   _running = false;
-
    if ( _reader_thread )
       _reader_thread->join();
 
@@ -132,17 +144,6 @@ void client_impl::disconnect()
       _reader_broker->disconnect();
 
    _connected = false;
-
-   // Upon disconnect, we have outstanding futures being handled by the policy handler
-   // threads. We can have them clean themselves up by setting the future value.
-   {
-      std::lock_guard< std::mutex > lock( _promise_map_mutex );
-      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
-      {
-         it->second.set_value( std::string{} );
-         _promise_map.erase( it );
-      }
-   }
 }
 
 bool client_impl::is_connected() const
@@ -212,7 +213,7 @@ error_code client_impl::on_connect( message_broker& m )
 
 void client_impl::consumer( std::shared_ptr< message_broker > broker )
 {
-   while ( _running )
+   while ( _connected )
    {
       auto result = _reader_broker->consume();
 
@@ -254,7 +255,7 @@ void client_impl::consumer( std::shared_ptr< message_broker > broker )
 
 void client_impl::policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
 {
-   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready && is_connected() )
+   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready )
    {
       std::lock_guard< std::mutex > guard( _promise_map_mutex );
       auto node_handle = _promise_map.extract( msg->correlation_id.value() );
@@ -263,7 +264,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
          switch ( policy )
          {
          case retry_policy::none:
-            node_handle.mapped().set_exception( std::make_exception_ptr( timeout_error( "Request timeout: " + msg->correlation_id.value() ) ) );
+            node_handle.mapped().set_exception( std::make_exception_ptr( timeout_error( "request timeout: " + msg->correlation_id.value() ) ) );
             return;
          case retry_policy::exponential_backoff:
             LOG(warning) << "No response to message with correlation ID: "
@@ -290,7 +291,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
             // Publish another attempt
             if ( _writer_broker->publish( *msg ) != error_code::success )
             {
-               node_handle.mapped().set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
+               node_handle.mapped().set_exception( std::make_exception_ptr( amqp_publish_error( "error sending RPC message" ) ) );
                return;
             }
 
@@ -300,7 +301,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
 
             if ( !success )
             {
-               nh.mapped().set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
+               nh.mapped().set_exception( std::make_exception_ptr( correlation_id_collision( "error recording correlation id" ) ) );
                return;
             }
             break;
@@ -321,7 +322,7 @@ std::shared_future< std::string > client_impl::rpc(
    retry_policy policy,
    const std::string& content_type )
 {
-   KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
+   KOINOS_ASSERT( _running, client_not_running, "client is not running" );
 
    auto promise = std::promise< std::string >();
 
@@ -351,7 +352,7 @@ std::shared_future< std::string > client_impl::rpc(
    auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
    {
-      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "Error sending RPC message" ) ) );
+      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "error sending RPC message" ) ) );
       return promise.get_future();
    }
 
@@ -363,7 +364,7 @@ std::shared_future< std::string > client_impl::rpc(
       if ( !empl_res.second )
       {
          promise = std::promise< std::string >();
-         promise.set_exception( std::make_exception_ptr( correlation_id_collision( "Error recording correlation id" ) ) );
+         promise.set_exception( std::make_exception_ptr( correlation_id_collision( "error recording correlation id" ) ) );
          return promise.get_future();
       }
 
@@ -380,7 +381,7 @@ std::shared_future< std::string > client_impl::rpc(
 
 void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
 {
-   KOINOS_ASSERT( _running, client_not_running, "Client is not running" );
+   KOINOS_ASSERT( _running, client_not_running, "client is not running" );
 
    auto err = _writer_broker->publish( message {
       .exchange     = exchange::event,
@@ -389,7 +390,7 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
       .data         = payload
    } );
 
-   KOINOS_ASSERT( err == error_code::success, amqp_publish_error, "Error broadcasting message" );
+   KOINOS_ASSERT( err == error_code::success, amqp_publish_error, "error broadcasting message" );
 }
 
 } // detail

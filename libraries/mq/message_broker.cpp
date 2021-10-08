@@ -1,5 +1,6 @@
 #include <koinos/mq/message_broker.hpp>
 
+#include <atomic>
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
@@ -21,6 +22,7 @@ namespace detail {
 class message_broker_impl final
 {
 private:
+   std::atomic< bool >             _running = true;
    std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
@@ -93,6 +95,7 @@ message_broker_impl::message_broker_impl( message_broker& m ) : _message_broker(
 
 message_broker_impl::~message_broker_impl()
 {
+   _running = false;
    disconnect();
 }
 
@@ -305,7 +308,7 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
 
       uint64_t amqp_sleep_ms = 1000;
 
-      while ( !_connection )
+      while ( !_connection && _running )
       {
          auto result = connect_lockfree(
             std::string( cinfo.host ),
@@ -463,7 +466,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
 {
    if ( r.reply_type == AMQP_RESPONSE_NONE )
    {
-      return "Missing RPC reply type";
+      return "missing RPC reply type";
    }
    else if ( r.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
    {
@@ -481,7 +484,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "Server connection error %u, message: %.*s",
+               "server connection error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -494,7 +497,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "Server channel error %u, message: %.*s",
+               "server channel error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -502,7 +505,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             return buf;
          }
          default:
-            snprintf( buf, bufsize, "Unknown server error, method ID 0x%08X", r.reply.id );
+            snprintf( buf, bufsize, "unknown server error, method ID 0x%08X", r.reply.id );
             return buf;
       }
    }
