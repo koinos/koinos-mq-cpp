@@ -68,10 +68,18 @@ request_handler::request_handler() :
    _publisher_broker( std::make_shared< message_broker >() ),
    _consumer_broker( std::make_shared< message_broker >() ) {}
 
-request_handler::~request_handler() = default;
+request_handler::~request_handler()
+{
+   stop();
+}
 
 void request_handler::start()
 {
+   if ( _running )
+      return;
+
+   _running = true;
+
    _consumer_thread = std::make_unique< std::thread >( [&]()
    {
       consumer( _consumer_broker );
@@ -94,9 +102,15 @@ void request_handler::start()
 
 void request_handler::stop()
 {
+   if ( !_running )
+      return;
+
+   _running = false;
+
    _input_queue.close();
    _consumer_broker->disconnect();
-   if ( _consumer_thread )
+
+   if ( _consumer_thread->joinable() )
       _consumer_thread->join();
 
    for( auto& c : _consumer_pool )
@@ -105,7 +119,8 @@ void request_handler::stop()
 
    _output_queue.close();
    _publisher_broker->disconnect();
-   if ( _publisher_thread )
+
+   if ( _publisher_thread->joinable() )
       _publisher_thread->join();
 }
 
@@ -273,7 +288,7 @@ error_code request_handler::add_msg_handler(
 
 void request_handler::publisher( std::shared_ptr< message_broker > publisher_broker, std::shared_ptr< message_broker > consumer_broker )
 {
-   while ( true )
+   while ( _running )
    {
       std::shared_ptr< message > m;
 
@@ -297,7 +312,7 @@ void request_handler::publisher( std::shared_ptr< message_broker > publisher_bro
 
 void request_handler::consumer( std::shared_ptr< message_broker > broker )
 {
-   while ( true )
+   while ( _running )
    {
       auto result = broker->consume();
 

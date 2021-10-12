@@ -1,2 +1,3 @@
 add_subdirectory(koinos_mq_client)
+add_subdirectory(koinos_test_driver)
 

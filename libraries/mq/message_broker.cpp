@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -22,6 +23,8 @@ namespace detail {
 class message_broker_impl final
 {
 private:
+   std::mutex                      _running_cv_mutex;
+   std::condition_variable_any     _running_cv;
    std::atomic< bool >             _running = false;
    std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
@@ -100,8 +103,9 @@ message_broker_impl::~message_broker_impl()
 
 void message_broker_impl::disconnect() noexcept
 {
-   _running = false;
    std::lock_guard< std::mutex > lock( _amqp_mutex );
+   _running = false;
+   _running_cv.notify_all();
    disconnect_lockfree();
 }
 
@@ -304,38 +308,47 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
       return error_code::failure;
    }
 
+   uint64_t amqp_sleep_ms = 1000;
+
+   while ( !_connection && _running )
    {
-      std::lock_guard< std::mutex > lock( _amqp_mutex );
+      mq::error_code result = mq::error_code::failure;
 
-      uint64_t amqp_sleep_ms = 1000;
-
-      while ( !_connection && _running )
       {
-         auto result = connect_lockfree(
+         std::lock_guard< std::mutex > lock( _amqp_mutex );
+
+         result = connect_lockfree(
             std::string( cinfo.host ),
             uint16_t( cinfo.port ),
             std::string( "/" ) + cinfo.vhost,
             std::string( cinfo.user ),
             std::string( cinfo.password )
          );
+      }
 
-         if ( result == error_code::success )
-            break;
+      if ( result == error_code::success )
+         break;
 
-         switch ( p )
+      switch ( p )
+      {
+      case retry_policy::none:
+         return error_code::failure;
+         break;
+
+      case retry_policy::exponential_backoff:
+         LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
          {
-         case retry_policy::none:
-            return error_code::failure;
-            break;
-
-         case retry_policy::exponential_backoff:
-            LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
-            std::this_thread::sleep_for( std::chrono::milliseconds( amqp_sleep_ms ) );
-            amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
-            break;
+            std::unique_lock< std::mutex > lck( _running_cv_mutex );
+            _running_cv.wait_for( _running_cv_mutex, std::chrono::milliseconds( amqp_sleep_ms ), [&]() { return !_running; } );
          }
+         amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
+         continue;
+         break;
       }
    }
+
+   if ( !_running )
+      return error_code::failure;
 
    if ( _on_connect_func( _message_broker ) == error_code::failure )
    {
