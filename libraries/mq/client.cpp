@@ -43,7 +43,6 @@ private:
    error_code on_connect( message_broker& m );
    void consumer( std::shared_ptr< message_broker > broker );
    void policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
-   void clear_promises();
 
    void set_queue_name( const std::string& s );
    std::string get_queue_name();
@@ -122,16 +121,6 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
    return error_code::success;
 }
 
-void client_impl::clear_promises()
-{
-   std::lock_guard< std::mutex > lock( _promise_map_mutex );
-   for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
-   {
-      it->second.set_value( std::string{} );
-      _promise_map.erase( it );
-   }
-}
-
 void client_impl::disconnect()
 {
    _running = false;
@@ -142,7 +131,14 @@ void client_impl::disconnect()
    if ( _reader_thread->joinable() )
       _reader_thread->join();
 
-   clear_promises();
+   {
+      std::lock_guard< std::mutex > lock( _promise_map_mutex );
+      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
+      {
+         it->second.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
+         _promise_map.erase( it );
+      }
+   }
 
    _connected = false;
 }
