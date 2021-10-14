@@ -22,10 +22,10 @@ public:
    client_impl();
    ~client_impl();
 
-   error_code connect( const std::string& amqp_url, retry_policy policy );
+   void connect( const std::string& amqp_url, retry_policy policy );
    void disconnect();
 
-   bool is_connected() const;
+   bool is_running() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,
@@ -57,7 +57,6 @@ private:
    std::shared_ptr< message_broker >                    _reader_broker;
    std::unique_ptr< std::thread >                       _reader_thread;
    std::atomic< bool >                                  _running   = false;
-   std::atomic< bool >                                  _connected = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
 };
@@ -83,18 +82,16 @@ std::string client_impl::get_queue_name()
    return _queue_name;
 }
 
-error_code client_impl::connect( const std::string& amqp_url, retry_policy policy )
+void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
-   error_code ec;
+   KOINOS_ASSERT( !is_running(), client_already_running, "client is already running" );
 
-   _running = true;
+   error_code ec;
 
    ec = _writer_broker->connect( amqp_url, policy );
 
    if ( ec != error_code::success )
-   {
-      return ec;
-   }
+      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
 
    ec = _reader_broker->connect(
       amqp_url,
@@ -108,21 +105,21 @@ error_code client_impl::connect( const std::string& amqp_url, retry_policy polic
    if ( ec != error_code::success )
    {
       _writer_broker->disconnect();
-      return ec;
+      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
    }
+
+   _running = true;
 
    _reader_thread = std::make_unique< std::thread >( [&]()
    {
       consumer( _reader_broker );
    } );
-
-   _connected = true;
-
-   return error_code::success;
 }
 
 void client_impl::disconnect()
 {
+   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
+
    _running = false;
 
    _writer_broker->disconnect();
@@ -139,13 +136,11 @@ void client_impl::disconnect()
          _promise_map.erase( it );
       }
    }
-
-   _connected = false;
 }
 
-bool client_impl::is_connected() const
+bool client_impl::is_running() const
 {
-   return _connected;
+   return _running;
 }
 
 error_code client_impl::on_connect( message_broker& m )
@@ -395,9 +390,9 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
 client::client() : _my( std::make_unique< detail::client_impl >() ) {}
 client::~client() = default;
 
-error_code client::connect( const std::string& amqp_url, retry_policy policy )
+void client::connect( const std::string& amqp_url, retry_policy policy )
 {
-   return _my->connect( amqp_url, policy );
+   _my->connect( amqp_url, policy );
 }
 
 std::shared_future< std::string > client::rpc(
@@ -415,9 +410,9 @@ void client::broadcast( const std::string& routing_key, const std::string& paylo
    _my->broadcast( routing_key, payload, content_type );
 }
 
-bool client::is_connected() const
+bool client::is_running() const
 {
-   return _my->is_connected();
+   return _my->is_running();
 }
 
 void client::disconnect()

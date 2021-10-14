@@ -12,10 +12,13 @@ namespace koinos::mq {
 
 namespace detail { class client_impl; }
 
-KOINOS_DECLARE_EXCEPTION( client_not_running );
-KOINOS_DECLARE_EXCEPTION( amqp_publish_error );
-KOINOS_DECLARE_EXCEPTION( correlation_id_collision );
-KOINOS_DECLARE_EXCEPTION( timeout_error );
+KOINOS_DECLARE_EXCEPTION( mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( unable_to_connect, mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( client_not_running, mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( client_already_running, mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( amqp_publish_error, mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( correlation_id_collision, mq_exception );
+KOINOS_DECLARE_DERIVED_EXCEPTION( timeout_error, mq_exception );
 
 class client final
 {
@@ -23,14 +26,14 @@ public:
    client();
    ~client();
 
-   error_code connect(
+   void connect(
       const std::string& amqp_url,
       retry_policy policy = retry_policy::exponential_backoff
    );
 
    void disconnect();
 
-   bool is_connected() const;
+   bool is_running() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,

@@ -53,14 +53,10 @@ int main( int argc, char** argv )
 
    mq::client c;
 
-   if( c.connect( amqp_url ) != mq::error_code::success )
-   {
-      LOG(error) << "Unable to connect to the AMQP server";
-      return EXIT_FAILURE;
-   }
-
    try
    {
+      c.connect( amqp_url );
+
       if ( broadcast_mode )
       {
          c.broadcast( routing_key, payload, content_type );

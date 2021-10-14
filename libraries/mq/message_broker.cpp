@@ -37,6 +37,8 @@ private:
 
    std::optional< std::string > error_info( amqp_rpc_reply_t r ) noexcept;
 
+   error_code assert_connection() noexcept;
+
    void disconnect_lockfree() noexcept;
 
    error_code connect_lockfree(
@@ -146,19 +148,9 @@ bool message_broker_impl::is_connected() noexcept
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
 {
-   if ( !is_connected() )
-   {
-      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
-      auto ec = connection_loop( _retry_policy );
-      if ( ec != error_code::success )
-      {
-         return error_code::failure;
-      }
-      else
-      {
-         LOG(info) << "Reestablished AMQP server connection";
-      }
-   }
+   auto ec = assert_connection();
+   if ( ec != error_code::success )
+      return ec;
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -284,12 +276,13 @@ error_code message_broker_impl::connect(
    _on_connect_func = f;
    _retry_policy = p;
    _amqp_url = url;
-   _running = true;
 
    if ( connection_loop( _retry_policy ) != error_code::success )
    {
       return error_code::failure;
    }
+
+   _running = true;
 
    return error_code::success;
 }
@@ -532,20 +525,9 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 {
    std::pair< error_code, std::shared_ptr< message > > result;
 
-   if ( !is_connected() )
-   {
-      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
-      auto ec = connection_loop( _retry_policy );
-      if ( ec != error_code::success )
-      {
-         result.first = error_code::failure;
-         return result;
-      }
-      else
-      {
-         LOG(info) << "Reestablished AMQP server connection";
-      }
-   }
+   result.first = assert_connection();
+   if ( result.first != error_code::success )
+      return result;
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -639,6 +621,32 @@ error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
    );
 
    return err != AMQP_STATUS_OK ? error_code::failure : error_code::success;
+}
+
+error_code message_broker_impl::assert_connection() noexcept
+{
+   if ( is_connected() )
+      return error_code::success;
+
+   if ( _retry_policy != retry_policy::none )
+   {
+      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
+      auto ec = connection_loop( _retry_policy );
+      if ( ec != error_code::success )
+      {
+         return error_code::failure;
+      }
+      else
+      {
+         LOG(info) << "Reestablished AMQP server connection";
+      }
+   }
+   else
+   {
+      return error_code::failure;
+   }
+
+   return error_code::success;
 }
 
 } // detail
