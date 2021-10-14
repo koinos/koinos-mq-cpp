@@ -110,7 +110,7 @@ void request_handler::stop()
    _input_queue.close();
    _consumer_broker->disconnect();
 
-   if ( _consumer_thread->joinable() )
+   if ( _consumer_thread && _consumer_thread->joinable() )
       _consumer_thread->join();
 
    for( auto& c : _consumer_pool )
@@ -120,7 +120,7 @@ void request_handler::stop()
    _output_queue.close();
    _publisher_broker->disconnect();
 
-   if ( _publisher_thread->joinable() )
+   if ( _publisher_thread && _publisher_thread->joinable() )
       _publisher_thread->join();
 }
 

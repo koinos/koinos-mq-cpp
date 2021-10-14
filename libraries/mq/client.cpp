@@ -132,7 +132,7 @@ void client_impl::disconnect()
    _writer_broker->disconnect();
    _reader_broker->disconnect();
 
-   if ( _reader_thread->joinable() )
+   if ( _reader_thread && _reader_thread->joinable() )
       _reader_thread->join();
 
    {
