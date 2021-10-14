@@ -56,7 +56,7 @@ private:
    std::shared_ptr< message_broker >                    _writer_broker;
    std::shared_ptr< message_broker >                    _reader_broker;
    std::unique_ptr< std::thread >                       _reader_thread;
-   std::atomic< bool >                                  _running   = false;
+   std::atomic< bool >                                  _running = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
 };
@@ -67,8 +67,12 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
-   if ( is_running() )
-      disconnect();
+   try
+   {
+      if ( is_running() )
+         disconnect();
+   }
+   catch( ... ) {}
 }
 
 void client_impl::set_queue_name( const std::string& s )
@@ -92,7 +96,9 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    ec = _writer_broker->connect( amqp_url, policy );
 
    if ( ec != error_code::success )
+   {
       KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
+   }
 
    ec = _reader_broker->connect(
       amqp_url,
