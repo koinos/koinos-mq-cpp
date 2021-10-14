@@ -67,7 +67,8 @@ client_impl::client_impl() :
 
 client_impl::~client_impl()
 {
-   disconnect();
+   if ( is_running() )
+      disconnect();
 }
 
 void client_impl::set_queue_name( const std::string& s )

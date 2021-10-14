@@ -100,7 +100,8 @@ message_broker_impl::message_broker_impl( message_broker& m ) : _message_broker(
 
 message_broker_impl::~message_broker_impl()
 {
-   disconnect();
+   if ( _running )
+      disconnect();
 }
 
 void message_broker_impl::disconnect() noexcept
@@ -276,13 +277,13 @@ error_code message_broker_impl::connect(
    _on_connect_func = f;
    _retry_policy = p;
    _amqp_url = url;
+   _running = true;
 
    if ( connection_loop( _retry_policy ) != error_code::success )
    {
+      _running = false;
       return error_code::failure;
    }
-
-   _running = true;
 
    return error_code::success;
 }
