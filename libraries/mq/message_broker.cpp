@@ -1,8 +1,10 @@
 #include <koinos/mq/message_broker.hpp>
 
+#include <atomic>
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -21,6 +23,9 @@ namespace detail {
 class message_broker_impl final
 {
 private:
+   std::mutex                      _running_cv_mutex;
+   std::condition_variable_any     _running_cv;
+   std::atomic< bool >             _running = false;
    std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
@@ -31,6 +36,8 @@ private:
    retry_policy                    _retry_policy = retry_policy::exponential_backoff;
 
    std::optional< std::string > error_info( amqp_rpc_reply_t r ) noexcept;
+
+   error_code assert_connection() noexcept;
 
    void disconnect_lockfree() noexcept;
 
@@ -93,12 +100,15 @@ message_broker_impl::message_broker_impl( message_broker& m ) : _message_broker(
 
 message_broker_impl::~message_broker_impl()
 {
-   disconnect();
+   if ( _running )
+      disconnect();
 }
 
 void message_broker_impl::disconnect() noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
+   _running = false;
+   _running_cv.notify_all();
    disconnect_lockfree();
 }
 
@@ -139,19 +149,9 @@ bool message_broker_impl::is_connected() noexcept
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
 {
-   if ( !is_connected() )
-   {
-      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
-      auto ec = connection_loop( _retry_policy );
-      if ( ec != error_code::success )
-      {
-         return error_code::failure;
-      }
-      else
-      {
-         LOG(info) << "Reestablished AMQP server connection";
-      }
-   }
+   auto ec = assert_connection();
+   if ( ec != error_code::success )
+      return ec;
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -277,9 +277,11 @@ error_code message_broker_impl::connect(
    _on_connect_func = f;
    _retry_policy = p;
    _amqp_url = url;
+   _running = true;
 
    if ( connection_loop( _retry_policy ) != error_code::success )
    {
+      _running = false;
       return error_code::failure;
    }
 
@@ -300,43 +302,53 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
       return error_code::failure;
    }
 
+   uint64_t amqp_sleep_ms = 1000;
+
+   while ( !_connection && _running )
    {
-      std::lock_guard< std::mutex > lock( _amqp_mutex );
+      mq::error_code result = mq::error_code::failure;
 
-      uint64_t amqp_sleep_ms = 1000;
-
-      while ( !_connection )
       {
-         auto result = connect_lockfree(
+         std::lock_guard< std::mutex > lock( _amqp_mutex );
+
+         result = connect_lockfree(
             std::string( cinfo.host ),
             uint16_t( cinfo.port ),
             std::string( "/" ) + cinfo.vhost,
             std::string( cinfo.user ),
             std::string( cinfo.password )
          );
+      }
 
-         if ( result == error_code::success )
-            break;
+      if ( result == error_code::success )
+         break;
 
-         switch ( p )
+      switch ( p )
+      {
+      case retry_policy::none:
+         return error_code::failure;
+         break;
+
+      case retry_policy::exponential_backoff:
+         LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
          {
-         case retry_policy::none:
-            return error_code::failure;
-            break;
-
-         case retry_policy::exponential_backoff:
-            LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
-            std::this_thread::sleep_for( std::chrono::milliseconds( amqp_sleep_ms ) );
-            amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
-            break;
+            std::unique_lock< std::mutex > lck( _running_cv_mutex );
+            _running_cv.wait_for( _running_cv_mutex, std::chrono::milliseconds( amqp_sleep_ms ), [&]() { return !_running; } );
          }
+         amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
+         continue;
+         break;
       }
    }
+
+   if ( !_running )
+      return error_code::failure;
 
    if ( _on_connect_func( _message_broker ) == error_code::failure )
    {
       LOG(error) << "Failure during connection callback";
-      disconnect();
+      std::lock_guard< std::mutex > lock( _amqp_mutex );
+      disconnect_lockfree();
       return error_code::failure;
    }
 
@@ -463,7 +475,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
 {
    if ( r.reply_type == AMQP_RESPONSE_NONE )
    {
-      return "Missing RPC reply type";
+      return "missing RPC reply type";
    }
    else if ( r.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
    {
@@ -481,7 +493,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "Server connection error %u, message: %.*s",
+               "server connection error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -494,7 +506,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             snprintf(
                buf,
                bufsize,
-               "Server channel error %u, message: %.*s",
+               "server channel error %u, message: %.*s",
                m->reply_code,
                (int)m->reply_text.len,
                (char*)m->reply_text.bytes
@@ -502,7 +514,7 @@ std::optional< std::string > message_broker_impl::error_info( amqp_rpc_reply_t r
             return buf;
          }
          default:
-            snprintf( buf, bufsize, "Unknown server error, method ID 0x%08X", r.reply.id );
+            snprintf( buf, bufsize, "unknown server error, method ID 0x%08X", r.reply.id );
             return buf;
       }
    }
@@ -514,20 +526,9 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 {
    std::pair< error_code, std::shared_ptr< message > > result;
 
-   if ( !is_connected() )
-   {
-      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
-      auto ec = connection_loop( _retry_policy );
-      if ( ec != error_code::success )
-      {
-         result.first = error_code::failure;
-         return result;
-      }
-      else
-      {
-         LOG(info) << "Reestablished AMQP server connection";
-      }
-   }
+   result.first = assert_connection();
+   if ( result.first != error_code::success )
+      return result;
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -621,6 +622,32 @@ error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
    );
 
    return err != AMQP_STATUS_OK ? error_code::failure : error_code::success;
+}
+
+error_code message_broker_impl::assert_connection() noexcept
+{
+   if ( is_connected() )
+      return error_code::success;
+
+   if ( _retry_policy != retry_policy::none )
+   {
+      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
+      auto ec = connection_loop( _retry_policy );
+      if ( ec != error_code::success )
+      {
+         return error_code::failure;
+      }
+      else
+      {
+         LOG(info) << "Reestablished AMQP server connection";
+      }
+   }
+   else
+   {
+      return error_code::failure;
+   }
+
+   return error_code::success;
 }
 
 } // detail

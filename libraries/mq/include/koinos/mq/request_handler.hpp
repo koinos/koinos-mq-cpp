@@ -9,6 +9,7 @@
 #include <boost/thread/sync_bounded_queue.hpp>
 #include <boost/tuple/tuple.hpp>
 
+#include <atomic>
 #include <memory>
 #include <set>
 #include <thread>
@@ -98,6 +99,7 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       synced_msg_queue                  _output_queue{ MAX_QUEUE_SIZE };
 
       std::vector< message_handler >    _message_handlers;
+      std::atomic< bool >               _running = false;
 };
 
 } // koinos::mq
