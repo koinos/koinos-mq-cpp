@@ -7,36 +7,44 @@ hunter_config(Boost
 )
 
 hunter_config(Protobuf
-   VERSION ${HUNTER_Protobuf_VERSION}
+   URL  "https://github.com/koinos/protobuf/archive/e1b1477875a8b022903b548eb144f2c7bf4d9561.tar.gz"
+   SHA1 "5796707a98eec15ffb3ad86ff50e8eec5fa65e68"
+   CMAKE_ARGS
+      CMAKE_CXX_FLAGS=-fvisibility=hidden
+      CMAKE_C_FLAGS=-fvisibility=hidden
+)
+
+hunter_config(yaml-cpp
+   VERSION "0.6.3"
    CMAKE_ARGS
       CMAKE_CXX_FLAGS=-fvisibility=hidden
       CMAKE_C_FLAGS=-fvisibility=hidden
 )
 
 hunter_config(koinos_util
-   URL  "https://github.com/koinos/koinos-util-cpp/archive/bc509581b6859c84bfc8aadeb1ae4cda1bcedd14.tar.gz"
-   SHA1 "0bb9ba9f56175360d499e5f6fa4caf59445ee69f"
+   URL  "https://github.com/koinos/koinos-util-cpp/archive/86730d4bde45021921b087a5c0d19a01056939d7.tar.gz"
+   SHA1 "8c2cc5f7f25e95a1083d4a184243e6c054a0d9ba"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_log
-   URL  "https://github.com/koinos/koinos-log-cpp/archive/8a148b2839116e060b3327fe6358210dd2a55f4d.tar.gz"
-   SHA1 "8075e5882ffc5d450b35521792dcf6b29027cebd"
+   URL  "https://github.com/koinos/koinos-log-cpp/archive/36dd30f44c61489fb9e8fb5a1e6c245f872d0350.tar.gz"
+   SHA1 "1a194b8d2fcfe8101fcd72fa97764940ade3466c"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_exception
-   URL  "https://github.com/koinos/koinos-exception-cpp/archive/77f5b1cf0877714d4214bab3a7eeab45ad33df54.tar.gz"
-   SHA1 "b974a3ef9133c82d144882ad395754c98ee6333c"
+   URL  "https://github.com/koinos/koinos-exception-cpp/archive/1f7513664dc5a63fffb4ca576a35295ac6778d98.tar.gz"
+   SHA1 "791c28682e0f8c7295abc3693e978a209a15f18c"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_proto
-   URL  "https://github.com/koinos/koinos-proto-cpp/archive/4acb3322d25148c66cf423cbe1c77c202439dfa8.tar.gz"
-   SHA1 "b8df692d6a535105c7673c883f0b3b8db5732d13"
+   URL  "https://github.com/koinos/koinos-proto-cpp/archive/5e93d9f313ea759eb8b2515e10a25160aa2b1db0.tar.gz"
+   SHA1 "11b9724202986f488185fe3d6d232a386c0319b7"
 )
 
 hunter_config(rabbitmq-c

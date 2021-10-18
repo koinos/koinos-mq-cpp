@@ -1,7 +1,5 @@
 #pragma once
 
-#include <koinos/util.hpp>
-
 #include <boost/core/noncopyable.hpp>
 
 #include <cstdint>
