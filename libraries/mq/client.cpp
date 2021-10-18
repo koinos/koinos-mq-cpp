@@ -1,7 +1,8 @@
 #include <koinos/mq/client.hpp>
 #include <koinos/mq/util.hpp>
 #include <koinos/log.hpp>
-#include <koinos/util.hpp>
+#include <koinos/util/hex.hpp>
+#include <koinos/util/random.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -275,12 +276,12 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
             LOG(debug) << " -> content_type:   " << msg->content_type;
             LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
             LOG(debug) << " -> expiration:     " << msg->expiration.value();
-            LOG(debug) << " -> data:           " << to_hex( msg->data );
+            LOG(debug) << " -> data:           " << util::to_hex( msg->data );
 
             // Adjust our message for another attempt
             auto old_correlation_id = msg->correlation_id.value();
 
-            msg->correlation_id = random_alphanumeric( _correlation_id_len );
+            msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
             msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
             msg->reply_to       = get_queue_name();
 
@@ -331,7 +332,7 @@ std::shared_future< std::string > client_impl::rpc(
    msg->content_type = content_type;
    msg->data = payload;
    msg->reply_to = get_queue_name();
-   msg->correlation_id = random_alphanumeric( _correlation_id_len );
+   msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
 
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
@@ -346,7 +347,7 @@ std::shared_future< std::string > client_impl::rpc(
    if ( msg->expiration.has_value() )
       LOG(debug) << " -> expiration:     " << *msg->expiration;
 
-   LOG(debug) << " -> data:           " << to_hex( msg->data );
+   LOG(debug) << " -> data:           " << util::to_hex( msg->data );
 
    auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )

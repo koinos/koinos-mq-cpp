@@ -1,6 +1,7 @@
 #include <koinos/mq/request_handler.hpp>
 #include <koinos/mq/util.hpp>
-#include <koinos/util.hpp>
+#include <koinos/util/hex.hpp>
+#include <koinos/util/overloaded.hpp>
 
 #include <chrono>
 #include <cstdlib>
@@ -36,7 +37,7 @@ void consumer_thread_main( synced_msg_queue& input_queue, synced_msg_queue& outp
                continue;
 
             std::visit(
-               koinos::overloaded {
+               util::overloaded {
                   [&]( const msg_handler_string_func& f )
                   {
                      auto resp = f( msg->data );
@@ -349,7 +350,7 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
          LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
 
       LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
-      LOG(debug) << " -> data:           " << to_hex( result.second->data );
+      LOG(debug) << " -> data:           " << util::to_hex( result.second->data );
 
       try
       {

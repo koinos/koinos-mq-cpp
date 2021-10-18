@@ -2,7 +2,6 @@
 
 #include <koinos/mq/message_broker.hpp>
 #include <koinos/log.hpp>
-#include <koinos/util.hpp>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/container/flat_map.hpp>

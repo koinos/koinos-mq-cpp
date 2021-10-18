@@ -14,7 +14,6 @@
 #include <amqp_framing.h>
 
 #include <koinos/log.hpp>
-#include <koinos/util.hpp>
 
 namespace koinos::mq {
 
