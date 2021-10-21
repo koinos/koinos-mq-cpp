@@ -22,22 +22,22 @@ hunter_config(yaml-cpp
 )
 
 hunter_config(koinos_util
-   URL  "https://github.com/koinos/koinos-util-cpp/archive/86730d4bde45021921b087a5c0d19a01056939d7.tar.gz"
-   SHA1 "8c2cc5f7f25e95a1083d4a184243e6c054a0d9ba"
+   URL  "https://github.com/koinos/koinos-util-cpp/archive/c42728a1fb312d0246124f3e8a27a4a2b9106606.tar.gz"
+   SHA1 "3cbbc0d80c8745e2a9d7e91250428625f427c117"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_log
-   URL  "https://github.com/koinos/koinos-log-cpp/archive/36dd30f44c61489fb9e8fb5a1e6c245f872d0350.tar.gz"
-   SHA1 "1a194b8d2fcfe8101fcd72fa97764940ade3466c"
+   URL  "https://github.com/koinos/koinos-log-cpp/archive/9ed0516ee7f010065d5d2de3a866a7e302fc8dae.tar.gz"
+   SHA1 "219828a04306f12b64ad4be7cba2ea67bdbbbad7"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
 
 hunter_config(koinos_exception
-   URL  "https://github.com/koinos/koinos-exception-cpp/archive/1f7513664dc5a63fffb4ca576a35295ac6778d98.tar.gz"
-   SHA1 "791c28682e0f8c7295abc3693e978a209a15f18c"
+   URL  "https://github.com/koinos/koinos-exception-cpp/archive/b34d82bc7f75297a6500009aa7530f83e1c6142c.tar.gz"
+   SHA1 "98eda354dae8ee488285cedae8abe2e5eb94c470"
    CMAKE_ARGS
       BUILD_TESTS=OFF
 )
