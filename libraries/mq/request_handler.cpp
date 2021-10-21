@@ -3,135 +3,102 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/overloaded.hpp>
 
+#include <boost/asio/post.hpp>
+
 #include <chrono>
 #include <cstdlib>
 
 namespace koinos::mq {
 
-void consumer_thread_main( synced_msg_queue& input_queue, synced_msg_queue& output_queue, const msg_routing_map& routing_map )
+void request_handler::handle_message( const boost::system::error_code& ec )
 {
-   while ( true )
+   if ( ec == boost::asio::error::operation_aborted )
+      return disconnect();
+
+   std::shared_ptr< message > msg;
+
+   _input_queue.pull_front( msg );
+
+   auto reply = std::make_shared< message >();
+   auto routing_itr = _handler_map.find( std::make_pair( msg->exchange, msg->routing_key ) );
+
+   if ( routing_itr == _handler_map.end() )
    {
-      std::shared_ptr< message > msg;
-      try
+      LOG(error) << "Did not find route: " << msg->exchange << ":" << msg->routing_key;
+   }
+   else
+   {
+      for ( const auto& h_pair : routing_itr->second )
       {
-         input_queue.pull_front( msg );
-      }
-      catch ( const boost::concurrent::sync_queue_is_closed& )
-      {
+         if ( !h_pair.first( msg->content_type ) )
+            continue;
+
+         std::visit(
+            util::overloaded {
+               [&]( const msg_handler_string_func& f )
+               {
+                  auto resp = f( msg->data );
+                  if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
+                  {
+                     reply->exchange       = exchange::rpc;
+                     reply->routing_key    = *msg->reply_to;
+                     reply->content_type   = msg->content_type;
+                     reply->correlation_id = *msg->correlation_id;
+                     reply->data           = resp;
+                     reply->delivery_tag   = msg->delivery_tag;
+
+                     _output_queue.push_back( reply );
+
+                     boost::asio::post( _io_context, std::bind( &request_handler::publish, this, boost::system::error_code{} ) );
+                  }
+               },
+               [&]( const msg_handler_void_func& f )
+               {
+                  f( msg->data );
+               },
+               [&]( const auto& ) {}
+            },h_pair.second );
          break;
-      }
-
-      auto reply = std::make_shared< message >();
-      auto routing_itr = routing_map.find( std::make_pair( msg->exchange, msg->routing_key ) );
-
-      if ( routing_itr == routing_map.end() )
-      {
-         LOG(error) << "Did not find route: " << msg->exchange << ":" << msg->routing_key ;
-      }
-      else
-      {
-         for ( const auto& h_pair : routing_itr->second )
-         {
-            if ( !h_pair.first( msg->content_type ) )
-               continue;
-
-            std::visit(
-               util::overloaded {
-                  [&]( const msg_handler_string_func& f )
-                  {
-                     auto resp = f( msg->data );
-                     if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
-                     {
-                        reply->exchange       = exchange::rpc;
-                        reply->routing_key    = *msg->reply_to;
-                        reply->content_type   = msg->content_type;
-                        reply->correlation_id = *msg->correlation_id;
-                        reply->data           = resp;
-                        reply->delivery_tag   = msg->delivery_tag;
-
-                        output_queue.push_back( reply );
-                     }
-                  },
-                  [&]( const msg_handler_void_func& f )
-                  {
-                     f( msg->data );
-                  },
-                  [&]( const auto& ) {}
-               }, h_pair.second );
-            break;
-         }
       }
    }
 }
 
-request_handler::request_handler() :
-   _publisher_broker( std::make_shared< message_broker >() ),
-   _consumer_broker( std::make_shared< message_broker >() ) {}
+request_handler::request_handler( boost::asio::io_context& io_context ) :
+   _publisher_broker( std::make_unique< message_broker >() ),
+   _consumer_broker( std::make_unique< message_broker >() ),
+   _io_context( io_context )
+{
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
+}
 
 request_handler::~request_handler()
 {
-   stop();
+   disconnect();
 }
 
-void request_handler::start()
+void request_handler::disconnect()
 {
-   if ( _running )
-      return;
+   if ( _consumer_broker->is_connected() )
+      _consumer_broker->disconnect();
 
-   _running = true;
+   if ( _publisher_broker->is_connected() )
+      _publisher_broker->disconnect();
+}
 
-   _consumer_thread = std::make_unique< std::thread >( [&]()
+void request_handler::connect( const std::string& amqp_url, retry_policy policy )
+{
+   if ( _publisher_broker->is_connected() || _consumer_broker->is_connected() )
    {
-      consumer( _consumer_broker );
-   } );
-
-   _publisher_thread = std::make_unique< std::thread >( [&]()
-   {
-      publisher( _publisher_broker, _consumer_broker );
-   } );
-
-   std::size_t num_threads = std::thread::hardware_concurrency() + 1;
-   for ( std::size_t i = 0; i < num_threads; i++ )
-   {
-      _consumer_pool.emplace_back( [&]()
-      {
-         consumer_thread_main( _input_queue, _output_queue, _handler_map );
-      } );
+      KOINOS_THROW( broker_already_running, "ensure the request handler is not already connected" );
    }
-}
 
-void request_handler::stop()
-{
-   if ( !_running )
-      return;
-
-   _running = false;
-
-   _input_queue.close();
-   _consumer_broker->disconnect();
-
-   if ( _consumer_thread && _consumer_thread->joinable() )
-      _consumer_thread->join();
-
-   for( auto& c : _consumer_pool )
-      c.join();
-   _consumer_pool.clear();
-
-   _output_queue.close();
-   _publisher_broker->disconnect();
-
-   if ( _publisher_thread && _publisher_thread->joinable() )
-      _publisher_thread->join();
-}
-
-error_code request_handler::connect( const std::string& amqp_url, retry_policy policy )
-{
    error_code ec;
 
    ec = _publisher_broker->connect( amqp_url, policy );
    if ( ec != error_code::success )
-      return ec;
+   {
+      KOINOS_THROW( unable_to_connect, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
+   }
 
    ec = _consumer_broker->connect(
       amqp_url,
@@ -143,9 +110,10 @@ error_code request_handler::connect( const std::string& amqp_url, retry_policy p
    );
 
    if ( ec != error_code::success )
-      return ec;
-
-   return error_code::success;
+   {
+      _publisher_broker->disconnect();
+      KOINOS_THROW( unable_to_connect, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
+   }
 }
 
 error_code request_handler::on_connect( message_broker& m )
@@ -229,23 +197,23 @@ error_code request_handler::on_connect( message_broker& m )
    return ec;
 }
 
-error_code request_handler::add_broadcast_handler(
+void request_handler::add_broadcast_handler(
    const std::string& routing_key,
    msg_handler_void_func func,
    handler_verify_func vfunc )
 {
-   return add_msg_handler( exchange::event, routing_key, false, vfunc, func );
+   add_msg_handler( exchange::event, routing_key, false, vfunc, func );
 }
 
-error_code request_handler::add_rpc_handler(
+void request_handler::add_rpc_handler(
    const std::string& service,
    msg_handler_string_func func,
    handler_verify_func vfunc )
 {
-   return add_msg_handler( exchange::rpc, service_routing_key( service ), true, vfunc, func );
+   add_msg_handler( exchange::rpc, service_routing_key( service ), true, vfunc, func );
 }
 
-error_code request_handler::add_msg_handler(
+void request_handler::add_msg_handler(
    const std::string& exchange,
    const std::string& routing_key,
    bool competing_consumer,
@@ -254,8 +222,7 @@ error_code request_handler::add_msg_handler(
 {
    if ( _consumer_broker->is_connected() )
    {
-      LOG(error) << "Message handlers should be added prior to AMQP connection";
-      return error_code::failure;
+      KOINOS_THROW( broker_already_running, "message handlers should be added prior to amqp connection" );
    }
 
    _message_handlers.push_back(
@@ -267,76 +234,49 @@ error_code request_handler::add_msg_handler(
          handler
       }
    );
-
-   return error_code::success;
 }
 
-error_code request_handler::add_msg_handler(
+void request_handler::add_msg_handler(
    const std::string& exchange,
    const std::string& routing_key,
    bool exclusive,
    handler_verify_func verify,
    msg_handler_string_func handler )
 {
-   return add_msg_handler(
-      exchange,
-      routing_key,
-      exclusive,
-      verify,
-      msg_handler_func( handler )
-   );
+   add_msg_handler( exchange, routing_key, exclusive, verify, msg_handler_func( handler ) );
 }
 
-void request_handler::publisher( std::shared_ptr< message_broker > publisher_broker, std::shared_ptr< message_broker > consumer_broker )
+void request_handler::publish( const boost::system::error_code& ec )
 {
-   while ( _running )
+   if ( ec == boost::asio::error::operation_aborted )
+      return disconnect();
+
+   std::shared_ptr< message > m;
+
+   _output_queue.pull_front( m );
+
+   auto r = _publisher_broker->publish( *m );
+
+   if ( r != error_code::success )
    {
-      std::shared_ptr< message > m;
-
-      try
-      {
-         _output_queue.pull_front( m );
-      }
-      catch ( const boost::sync_queue_is_closed& )
-      {
-         break;
-      }
-
-      auto r = publisher_broker->publish( *m );
-
-      if ( r != error_code::success )
-      {
-         LOG(error) << "An error has occurred while publishing message";
-      }
+      LOG(error) << "An error has occurred while publishing message";
    }
 }
 
-void request_handler::consumer( std::shared_ptr< message_broker > broker )
+void request_handler::consume( const boost::system::error_code& ec )
 {
-   while ( _running )
+   if ( ec == boost::asio::error::operation_aborted )
+      return disconnect();
+
+   auto result = _consumer_broker->consume();
+
+   if ( result.first == error_code::time_out ) {}
+   else if ( result.first != error_code::success )
    {
-      auto result = broker->consume();
-
-      if ( result.first == error_code::time_out )
-      {
-         if ( _input_queue.closed() )
-            break;
-         else
-            continue;
-      }
-
-      if ( result.first != error_code::success )
-      {
-         LOG(warning) << "Failed to consume message";
-         continue;
-      }
-
-      if ( !result.second )
-      {
-         LOG(warning) << "Consumption succeeded but resulted in an empty message";
-         continue;
-      }
-
+      LOG(warning) << "Failed to consume message";
+   }
+   else
+   {
       LOG(debug) << "Received message";
 
       LOG(debug) << " -> exchange:       " << result.second->exchange;
@@ -352,15 +292,12 @@ void request_handler::consumer( std::shared_ptr< message_broker > broker )
       LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
       LOG(debug) << " -> data:           " << util::to_hex( result.second->data );
 
-      try
-      {
-         _input_queue.push_back( result.second );
-      }
-      catch ( const boost::sync_queue_is_closed& )
-      {
-         break;
-      }
+      _input_queue.push_back( result.second );
+
+      boost::asio::post( _io_context, std::bind( &request_handler::handle_message, this, boost::system::error_code{} ) );
    }
+
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
 }
 
 } // koinos::mq

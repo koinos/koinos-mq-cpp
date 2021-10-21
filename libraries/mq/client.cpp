@@ -90,7 +90,7 @@ std::string client_impl::get_queue_name()
 
 void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
-   KOINOS_ASSERT( !is_running(), client_already_running, "client is already running" );
+   KOINOS_ASSERT( !is_running(), broker_already_running, "client is already running" );
 
    error_code ec;
 
@@ -291,7 +291,7 @@ void client_impl::policy_handler( std::shared_future< std::string > future, std:
             // Publish another attempt
             if ( _writer_broker->publish( *msg ) != error_code::success )
             {
-               node_handle.mapped().set_exception( std::make_exception_ptr( amqp_publish_error( "error sending RPC message" ) ) );
+               node_handle.mapped().set_exception( std::make_exception_ptr( broker_publish_error( "error sending RPC message" ) ) );
                return;
             }
 
@@ -352,7 +352,7 @@ std::shared_future< std::string > client_impl::rpc(
    auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
    {
-      promise.set_exception( std::make_exception_ptr( amqp_publish_error( "error sending RPC message" ) ) );
+      promise.set_exception( std::make_exception_ptr( broker_publish_error( "error sending RPC message" ) ) );
       return promise.get_future();
    }
 
@@ -390,7 +390,7 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
       .data         = payload
    } );
 
-   KOINOS_ASSERT( err == error_code::success, amqp_publish_error, "error broadcasting message" );
+   KOINOS_ASSERT( err == error_code::success, broker_publish_error, "error broadcasting message" );
 }
 
 } // detail
