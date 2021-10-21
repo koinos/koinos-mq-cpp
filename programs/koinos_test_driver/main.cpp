@@ -9,47 +9,57 @@
 #include <koinos/log.hpp>
 #include <koinos/mq/client.hpp>
 #include <koinos/mq/request_handler.hpp>
+#include <koinos/util/hex.hpp>
 
 using namespace std::chrono_literals;
 
+using work_guard_type = boost::asio::executor_work_guard< boost::asio::io_context::executor_type >;
+
 int main( int argc, char** argv )
 {
-   auto request_handler = koinos::mq::request_handler();
+   try
+   {
+      koinos::initialize_logging( "koinos_mq_handler" );
+      boost::asio::io_context main_context, work_context;
 
-   koinos::mq::error_code ec = koinos::mq::error_code::success;
+      auto request_handler = koinos::mq::request_handler( work_context );
 
-   ec = request_handler.add_rpc_handler(
-      "my_service",
-      [&]( const std::string& msg ) -> std::string
+      request_handler.add_broadcast_handler(
+         "koinos.block.accept",
+         [&]( const std::string& msg ) -> void
+         {
+            LOG(info) << "Received message: " << koinos::util::to_hex( msg ) << std::endl;
+         }
+      );
+
+      request_handler.connect( "amqp://guest:guest@localhost:5672/" );
+
+      boost::asio::signal_set signals( main_context, SIGINT, SIGTERM );
+
+      signals.async_wait( [&]( const boost::system::error_code& err, int num )
       {
-         return msg;
-      }
-   );
+         LOG(info) << "Caught signal, shutting down...";
+         main_context.stop();
+         work_context.stop();
+      } );
 
-   if ( ec != koinos::mq::error_code::success )
-   {
-      LOG(error) << "Unable to register MQ RPC handler";
-      exit( EXIT_FAILURE );
+      std::vector< std::thread > threads;
+      for ( std::size_t i = 0; i < std::thread::hardware_concurrency() + 1; i++ )
+         threads.emplace_back( [&]() { work_context.run(); } );
+
+      work_guard_type main_work_guard( main_context.get_executor() );
+      work_guard_type request_work_guard( work_context.get_executor() );
+      main_context.run();
+      work_context.run();
+
+      for ( auto& t : threads )
+         t.join();
    }
-
-   LOG(info) << "Connecting AMQP request handler...";
-   ec = request_handler.connect( "amqp://guest:guest@localhost:5672/" );
-   if ( ec != koinos::mq::error_code::success )
+   catch ( const std::exception& e )
    {
-      LOG(error) << "Failed to connect request handler to AMQP server";
-      exit( EXIT_FAILURE );
+      LOG(error) << "Error: " << e.what();
+      return EXIT_FAILURE;
    }
-   LOG(info) << "Established request handler connection to the AMQP server";
-
-   request_handler.start();
-
-   auto client = koinos::mq::client();
-   client.connect( "amqp://guest:guest@localhost:5672/" );
-
-   std::this_thread::sleep_for(20s);
-
-   request_handler.stop();
-   client.disconnect();
 
    return EXIT_SUCCESS;
 }
