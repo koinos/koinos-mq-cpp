@@ -161,7 +161,7 @@ void client_impl::disconnect()
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
-      it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
+//      it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
       _requests.erase( it );
    }
 }
