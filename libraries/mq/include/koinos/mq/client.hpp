@@ -3,6 +3,8 @@
 #include <koinos/mq/exception.hpp>
 #include <koinos/mq/message_broker.hpp>
 
+#include <boost/asio/io_context.hpp>
+
 #include <chrono>
 #include <future>
 #include <memory>
@@ -15,7 +17,7 @@ namespace detail { class client_impl; }
 class client final
 {
 public:
-   client();
+   client( boost::asio::io_context& io_context );
    ~client();
 
    void connect(
