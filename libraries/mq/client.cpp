@@ -124,7 +124,7 @@ std::string client_impl::get_queue_name()
 
 void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
-   KOINOS_ASSERT( !is_running(), broker_already_running, "client is already running" );
+//   KOINOS_ASSERT( !is_running(), broker_already_running, "client is already running" );
 
    error_code ec;
 
@@ -153,7 +153,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
 void client_impl::disconnect()
 {
-   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
+//   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
 
    _writer_broker->disconnect();
    _reader_broker->disconnect();
@@ -331,6 +331,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
       }
    }
 
+   _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
    if ( auto it = idx.begin(); it != idx.end() )
       _timer.expires_from_now( std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::milliseconds( *it->msg->expiration ) ) );
 }
@@ -376,7 +377,7 @@ std::shared_future< std::string > client_impl::rpc(
       return promise.get_future();
    }
 
-   std::shared_future< std::string > future_val;
+   std::shared_future< std::string > future_val = promise.get_future();
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
 
@@ -390,18 +391,10 @@ std::shared_future< std::string > client_impl::rpc(
    const auto& [ iter, success ] = _requests.insert( std::move( r ) );
    KOINOS_ASSERT( success, request_insertion_error, "failed to insert request" );
 
-   if ( !iter->expiration.count() )
+   auto policy_handler_time = _timer.expires_at();
+   if ( std::chrono::milliseconds( iter->expiration ) < std::chrono::duration_cast< std::chrono::milliseconds >( policy_handler_time.time_since_epoch() ) )
    {
-      future_val = iter->response.get_future();
-      _requests.erase( iter );
-   }
-   else
-   {
-      auto policy_handler_time = _timer.expires_at();
-      if ( std::chrono::milliseconds( iter->expiration ) < std::chrono::duration_cast< std::chrono::milliseconds >( policy_handler_time.time_since_epoch() ) )
-      {
-         _timer.expires_from_now( std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::milliseconds( *msg->expiration ) ) );
-      }
+      _timer.expires_from_now( std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::milliseconds( *msg->expiration ) ) );
    }
 
    return future_val;
