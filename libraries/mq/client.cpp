@@ -91,6 +91,7 @@ private:
    boost::asio::io_context&                             _io_context;
    boost::asio::high_resolution_timer                   _timer;
    boost::asio::signal_set                              _signals;
+   std::atomic_bool                                     _stopped = false;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
@@ -98,7 +99,15 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
    _timer( io_context ),
-   _signals( io_context, SIGINT, SIGTERM ) {}
+   _signals( io_context )
+{
+   _signals.add( SIGINT );
+   _signals.add( SIGTERM );
+#if defined(SIGQUIT)
+   _signals.add( SIGQUIT );
+#endif // defined(SIGQUIT)
+   static_assert( std::atomic_bool::is_always_lock_free );
+}
 
 client_impl::~client_impl()
 {
@@ -144,25 +153,22 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
       KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
    }
 
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+   } );
+
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
    _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
    _timer.expires_from_now( 1s );
-
-   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
-   {
-      abort();
-   } );
 }
 
 void client_impl::abort()
 {
-   LOG(info) << "abort() called";
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
-      LOG(info) << "set_exception";
       it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
-      LOG(info) << "erase";
       _requests.erase( it );
    }
 }
@@ -243,8 +249,8 @@ error_code client_impl::on_connect( message_broker& m )
 
 void client_impl::consume( const boost::system::error_code& ec )
 {
-   if ( ec == boost::asio::error::operation_aborted )
-      return;
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
+      return abort();
 
    auto result = _reader_broker->consume();
 
@@ -282,8 +288,8 @@ void client_impl::consume( const boost::system::error_code& ec )
 
 void client_impl::policy_handler( const boost::system::error_code& ec )
 {
-   if ( ec == boost::asio::error::operation_aborted )
-      return;
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
+      return abort();
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );
