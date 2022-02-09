@@ -3,6 +3,7 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/overloaded.hpp>
 
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 
 #include <chrono>
@@ -242,7 +243,7 @@ void request_handler::add_msg_handler(
 void request_handler::publish( const boost::system::error_code& ec )
 {
    if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+      return;
 
    std::shared_ptr< message > m;
 
@@ -259,9 +260,11 @@ void request_handler::publish( const boost::system::error_code& ec )
 void request_handler::consume( const boost::system::error_code& ec )
 {
    if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+      return;
 
    auto result = _consumer_broker->consume();
+
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
 
    if ( result.first == error_code::time_out ) {}
    else if ( result.first != error_code::success )
@@ -287,10 +290,8 @@ void request_handler::consume( const boost::system::error_code& ec )
 
       _input_queue.push_back( result.second );
 
-      boost::asio::post( _io_context, std::bind( &request_handler::handle_message, this, boost::system::error_code{} ) );
+      boost::asio::dispatch( _io_context, std::bind( &request_handler::handle_message, this, boost::system::error_code{} ) );
    }
-
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
 }
 
 } // koinos::mq

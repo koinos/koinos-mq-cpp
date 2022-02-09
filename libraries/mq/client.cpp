@@ -4,7 +4,7 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/random.hpp>
 
-#include <boost/asio/high_resolution_timer.hpp>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/multi_index_container.hpp>
@@ -40,9 +40,9 @@ typedef boost::multi_index::multi_index_container<
   request,
   boost::multi_index::indexed_by<
     boost::multi_index::ordered_unique<
-      boost::multi_index::tag< by_correlation_id >, BOOST_MULTI_INDEX_MEMBER( request, std::string, correlation_id )>,
+      boost::multi_index::tag< by_correlation_id >, boost::multi_index::member< request, std::string, &request::correlation_id > >,
     boost::multi_index::ordered_non_unique<
-      boost::multi_index::tag< by_expiration >, BOOST_MULTI_INDEX_MEMBER( request, std::chrono::milliseconds, expiration )>
+      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, std::chrono::milliseconds, &request::expiration > >
    >
 > request_set;
 
@@ -89,7 +89,6 @@ private:
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
    boost::asio::io_context&                             _io_context;
-   boost::asio::high_resolution_timer                   _timer;
    boost::asio::signal_set                              _signals;
    std::atomic_bool                                     _stopped = false;
 };
@@ -98,7 +97,6 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _io_context( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
-   _timer( io_context ),
    _signals( io_context )
 {
    _signals.add( SIGINT );
@@ -159,8 +157,6 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    } );
 
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
-   _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
-   _timer.expires_from_now( 1s );
 }
 
 void client_impl::abort()
@@ -284,6 +280,7 @@ void client_impl::consume( const boost::system::error_code& ec )
    }
 
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
+   boost::asio::dispatch( _io_context, std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
 }
 
 void client_impl::policy_handler( const boost::system::error_code& ec )
@@ -346,9 +343,6 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
          break;
       }
    }
-
-   _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
-   _timer.expires_from_now( 1s );
 }
 
 std::shared_future< std::string > client_impl::rpc(
@@ -398,7 +392,10 @@ std::shared_future< std::string > client_impl::rpc(
 
    request r;
    r.correlation_id = *msg->correlation_id;
-   r.expiration     = msg->expiration ? std::chrono::milliseconds( 0 ) : std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() + std::chrono::milliseconds( *msg->expiration ) );
+   if ( msg->expiration )
+      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() );
+   else
+      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() + std::chrono::milliseconds( *msg->expiration ) );
    r.policy         = policy;
    r.response       = std::move( promise );
    r.msg            = msg;

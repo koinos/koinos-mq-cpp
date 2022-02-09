@@ -22,9 +22,7 @@ namespace detail {
 class message_broker_impl final
 {
 private:
-   std::mutex                      _running_cv_mutex;
-   std::condition_variable_any     _running_cv;
-   std::atomic< bool >             _running = false;
+   std::atomic_bool                _running = false;
    std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
@@ -97,7 +95,6 @@ void message_broker_impl::disconnect() noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
    _running = false;
-   _running_cv.notify_all();
    disconnect_lockfree();
 }
 
