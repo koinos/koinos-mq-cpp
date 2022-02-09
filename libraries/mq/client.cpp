@@ -27,7 +27,7 @@ namespace detail {
 struct request
 {
    std::string                         correlation_id;
-   std::chrono::milliseconds           expiration;
+   uint64_t                            expiration;
    retry_policy                        policy;
    mutable std::promise< std::string > response;
    mutable std::shared_ptr< message >  msg;
@@ -42,7 +42,7 @@ typedef boost::multi_index::multi_index_container<
     boost::multi_index::ordered_unique<
       boost::multi_index::tag< by_correlation_id >, boost::multi_index::member< request, std::string, &request::correlation_id > >,
     boost::multi_index::ordered_non_unique<
-      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, std::chrono::milliseconds, &request::expiration > >
+      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, uint64_t, &request::expiration > >
    >
 > request_set;
 
@@ -293,7 +293,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
-      if ( it->expiration >= std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ) )
+      if ( it->expiration <= std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() )
          break;
 
       switch ( it->policy )
@@ -332,7 +332,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
 
          request r;
          r.correlation_id = it->msg->correlation_id.value();
-         r.expiration     = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() + std::chrono::milliseconds( *it->msg->expiration ) );
+         r.expiration     = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() + *it->msg->expiration;
          r.policy         = it->policy;
          r.response       = std::move( it->response );
          r.msg            = it->msg;
@@ -393,9 +393,9 @@ std::shared_future< std::string > client_impl::rpc(
    request r;
    r.correlation_id = *msg->correlation_id;
    if ( msg->expiration )
-      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() );
+      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count();
    else
-      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ) + std::chrono::milliseconds( *msg->expiration );
+      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() + *msg->expiration;
    r.policy         = policy;
    r.response       = std::move( promise );
    r.msg            = msg;
