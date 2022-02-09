@@ -395,7 +395,7 @@ std::shared_future< std::string > client_impl::rpc(
    if ( msg->expiration )
       r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() );
    else
-      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() + std::chrono::milliseconds( *msg->expiration ) );
+      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ) + std::chrono::milliseconds( *msg->expiration );
    r.policy         = policy;
    r.response       = std::move( promise );
    r.msg            = msg;
