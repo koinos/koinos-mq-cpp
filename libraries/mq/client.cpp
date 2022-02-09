@@ -72,6 +72,7 @@ private:
    error_code on_connect( message_broker& m );
    void consume( const boost::system::error_code& ec );
    void policy_handler( const boost::system::error_code& ec );
+   void abort();
 
    void set_queue_name( const std::string& s );
    std::string get_queue_name();
@@ -98,12 +99,7 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
 
 client_impl::~client_impl()
 {
-   try
-   {
-      if ( is_running() )
-         disconnect();
-   }
-   catch( ... ) {}
+   disconnect();
 }
 
 void client_impl::set_queue_name( const std::string& s )
@@ -149,22 +145,23 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
 }
 
-void client_impl::disconnect()
+void client_impl::abort()
 {
-//   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
-
-   if ( _writer_broker->connected() )
-      _writer_broker->disconnect();
-
-   if ( _reader_broker->connected() )
-      _reader_broker->disconnect();
-
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
       it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
       _requests.erase( it );
    }
+}
+
+void client_impl::disconnect()
+{
+   if ( _writer_broker->connected() )
+      _writer_broker->disconnect();
+
+   if ( _reader_broker->connected() )
+      _reader_broker->disconnect();
 }
 
 bool client_impl::is_running() const
@@ -235,7 +232,7 @@ error_code client_impl::on_connect( message_broker& m )
 void client_impl::consume( const boost::system::error_code& ec )
 {
    if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+      return abort();
 
    auto result = _reader_broker->consume();
 
@@ -274,7 +271,7 @@ void client_impl::consume( const boost::system::error_code& ec )
 void client_impl::policy_handler( const boost::system::error_code& ec )
 {
    if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+      return abort();
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );
