@@ -6,6 +6,7 @@
 
 #include <boost/asio/high_resolution_timer.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/member.hpp>
 #include <boost/multi_index/ordered_index.hpp>
@@ -89,13 +90,15 @@ private:
    static constexpr std::size_t                         _correlation_id_len = 32;
    boost::asio::io_context&                             _io_context;
    boost::asio::high_resolution_timer                   _timer;
+   boost::asio::signal_set                              _signals;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
    _io_context( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
-   _timer( io_context ) {}
+   _timer( io_context ),
+   _signals( io_context, SIGINT, SIGTERM ) {}
 
 client_impl::~client_impl()
 {
@@ -144,6 +147,11 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
    _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
    _timer.expires_from_now( 1s );
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      abort();
+   } );
 }
 
 void client_impl::abort()
@@ -235,12 +243,8 @@ error_code client_impl::on_connect( message_broker& m )
 
 void client_impl::consume( const boost::system::error_code& ec )
 {
-   LOG(info) << "consume()";
-   if ( ec )
-   {
-      LOG(info) << "operation_aborted in consume()";
-      return abort();
-   }
+   if ( ec == boost::asio::error::operation_aborted )
+      return;
 
    auto result = _reader_broker->consume();
 
@@ -278,12 +282,8 @@ void client_impl::consume( const boost::system::error_code& ec )
 
 void client_impl::policy_handler( const boost::system::error_code& ec )
 {
-   LOG(info) << "policy_handler()";
-   if ( ec )
-   {
-      LOG(info) << "operation_aborted in policy_handler()";
-      return abort();
-   }
+   if ( ec == boost::asio::error::operation_aborted )
+      return;
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );
