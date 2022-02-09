@@ -132,7 +132,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    _amqp_url = amqp_url;
 
-   error_code ec = _retryer.with_policy(
+   error_code code = _retryer.with_policy(
       policy,
       [&]() -> error_code
       {
@@ -154,12 +154,12 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
          if ( e != error_code::success )
             _writer_broker->disconnect();
 
-         return ec;
+         return e;
       },
       "connect client to the AMQP server and declare queues"
    );
 
-   if ( ec != error_code::success )
+   if ( code != error_code::success )
       KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
@@ -262,7 +262,7 @@ void client_impl::consume( const boost::system::error_code& ec )
    error_code e;
    std::shared_ptr< message > m;
 
-   _retryer.with_policy(
+   e = _retryer.with_policy(
       retry_policy::exponential_backoff,
       [&]() -> error_code
       {
