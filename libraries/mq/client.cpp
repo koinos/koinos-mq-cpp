@@ -330,8 +330,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
    }
 
    _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
-   if ( auto it = idx.begin(); it != idx.end() )
-      _timer.expires_from_now( std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::milliseconds( *it->msg->expiration ) ) );
+   _timer.expires_from_now( 1s );
 }
 
 std::shared_future< std::string > client_impl::rpc(
