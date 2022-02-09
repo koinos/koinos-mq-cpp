@@ -143,14 +143,18 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
    _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
+   _timer.expires_from_now( 1s );
 }
 
 void client_impl::abort()
 {
+   LOG(info) << "abort() called";
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
+      LOG(info) << "set_exception";
       it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
+      LOG(info) << "erase";
       _requests.erase( it );
    }
 }
@@ -374,7 +378,7 @@ std::shared_future< std::string > client_impl::rpc(
       return promise.get_future();
    }
 
-   std::shared_future< std::string > future_val = promise.get_future();
+   std::shared_future< std::string > fut = promise.get_future();
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
 
@@ -388,13 +392,7 @@ std::shared_future< std::string > client_impl::rpc(
    const auto& [ iter, success ] = _requests.insert( std::move( r ) );
    KOINOS_ASSERT( success, request_insertion_error, "failed to insert request" );
 
-   auto policy_handler_time = _timer.expires_at();
-   if ( std::chrono::milliseconds( iter->expiration ) < std::chrono::duration_cast< std::chrono::milliseconds >( policy_handler_time.time_since_epoch() ) )
-   {
-      _timer.expires_from_now( std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::milliseconds( *msg->expiration ) ) );
-   }
-
-   return future_val;
+   return fut;
 }
 
 void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
