@@ -67,7 +67,16 @@ void request_handler::handle_message( const boost::system::error_code& ec )
 request_handler::request_handler( boost::asio::io_context& io_context ) :
    _publisher_broker( std::make_unique< message_broker >() ),
    _consumer_broker( std::make_unique< message_broker >() ),
-   _io_context( io_context ) {}
+   _io_context( io_context ),
+   _signals( io_context )
+{
+   _signals.add( SIGINT );
+   _signals.add( SIGTERM );
+#if defined(SIGQUIT)
+   _signals.add( SIGQUIT );
+#endif // defined(SIGQUIT)
+   static_assert( std::atomic_bool::is_always_lock_free );
+}
 
 request_handler::~request_handler()
 {
@@ -109,6 +118,11 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
       _publisher_broker->disconnect();
       KOINOS_THROW( unable_to_connect, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
    }
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+   } );
 
    boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
 }
@@ -242,7 +256,7 @@ void request_handler::add_msg_handler(
 
 void request_handler::publish( const boost::system::error_code& ec )
 {
-   if ( ec == boost::asio::error::operation_aborted )
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
       return;
 
    std::shared_ptr< message > m;
@@ -259,7 +273,7 @@ void request_handler::publish( const boost::system::error_code& ec )
 
 void request_handler::consume( const boost::system::error_code& ec )
 {
-   if ( ec == boost::asio::error::operation_aborted )
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
       return;
 
    auto result = _consumer_broker->consume();

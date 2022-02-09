@@ -97,6 +97,9 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
       std::vector< message_handler >    _message_handlers;
       boost::asio::io_context&          _io_context;
+
+      boost::asio::signal_set           _signals;
+      std::atomic_bool                  _stopped = false;
 };
 
 } // koinos::mq
