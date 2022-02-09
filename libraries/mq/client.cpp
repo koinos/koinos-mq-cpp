@@ -236,7 +236,7 @@ error_code client_impl::on_connect( message_broker& m )
 void client_impl::consume( const boost::system::error_code& ec )
 {
    LOG(info) << "consume()";
-   if ( ec == boost::asio::error::operation_aborted )
+   if ( ec )
    {
       LOG(info) << "operation_aborted in consume()";
       return abort();
@@ -279,7 +279,7 @@ void client_impl::consume( const boost::system::error_code& ec )
 void client_impl::policy_handler( const boost::system::error_code& ec )
 {
    LOG(info) << "policy_handler()";
-   if ( ec == boost::asio::error::operation_aborted )
+   if ( ec )
    {
       LOG(info) << "operation_aborted in policy_handler()";
       return abort();
