@@ -94,11 +94,7 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _io_context( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
-   _timer( io_context )
-{
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
-   _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
-}
+   _timer( io_context ) {}
 
 client_impl::~client_impl()
 {
@@ -128,7 +124,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
    error_code ec;
 
-   ec = _writer_broker->connect( amqp_url, policy );
+   ec = _writer_broker->connect( amqp_url );
 
    if ( ec != error_code::success )
    {
@@ -137,7 +133,6 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
    ec = _reader_broker->connect(
       amqp_url,
-      policy,
       [this]( message_broker& m ) -> error_code
       {
          return this->on_connect( m );
@@ -149,19 +144,25 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
       _writer_broker->disconnect();
       KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
    }
+
+   boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
+   _timer.async_wait( std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
 }
 
 void client_impl::disconnect()
 {
 //   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
 
-   _writer_broker->disconnect();
-   _reader_broker->disconnect();
+   if ( _writer_broker->connected() )
+      _writer_broker->disconnect();
+
+   if ( _reader_broker->connected() )
+      _reader_broker->disconnect();
 
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
-//      it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
+      it->response.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
       _requests.erase( it );
    }
 }
@@ -280,7 +281,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
-      if ( it->expiration > std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ) )
+      if ( it->expiration >= std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ) )
          break;
 
       switch ( it->policy )

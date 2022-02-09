@@ -66,10 +66,7 @@ void request_handler::handle_message( const boost::system::error_code& ec )
 request_handler::request_handler( boost::asio::io_context& io_context ) :
    _publisher_broker( std::make_unique< message_broker >() ),
    _consumer_broker( std::make_unique< message_broker >() ),
-   _io_context( io_context )
-{
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
-}
+   _io_context( io_context ) {}
 
 request_handler::~request_handler()
 {
@@ -78,23 +75,21 @@ request_handler::~request_handler()
 
 void request_handler::disconnect()
 {
-   if ( _consumer_broker->is_connected() )
+   if ( _consumer_broker->connected() )
       _consumer_broker->disconnect();
 
-   if ( _publisher_broker->is_connected() )
+   if ( _publisher_broker->connected() )
       _publisher_broker->disconnect();
 }
 
 void request_handler::connect( const std::string& amqp_url, retry_policy policy )
 {
-   if ( _publisher_broker->is_connected() || _consumer_broker->is_connected() )
-   {
-      KOINOS_THROW( broker_already_running, "ensure the request handler is not already connected" );
-   }
+   KOINOS_ASSERT( !_publisher_broker->connected(), broker_already_running, "request handler publisher is already connected" );
+   KOINOS_ASSERT( !_consumer_broker->connected(), broker_already_running, "request handler consumer is already connected" );
 
    error_code ec;
 
-   ec = _publisher_broker->connect( amqp_url, policy );
+   ec = _publisher_broker->connect( amqp_url );
    if ( ec != error_code::success )
    {
       KOINOS_THROW( unable_to_connect, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
@@ -102,7 +97,6 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
 
    ec = _consumer_broker->connect(
       amqp_url,
-      policy,
       [this]( message_broker& m )
       {
          return this->on_connect( m );
@@ -114,6 +108,8 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
       _publisher_broker->disconnect();
       KOINOS_THROW( unable_to_connect, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
    }
+
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
 }
 
 error_code request_handler::on_connect( message_broker& m )
@@ -220,10 +216,7 @@ void request_handler::add_msg_handler(
    handler_verify_func verify,
    msg_handler_func handler )
 {
-   if ( _consumer_broker->is_connected() )
-   {
-      KOINOS_THROW( broker_already_running, "message handlers should be added prior to amqp connection" );
-   }
+   KOINOS_ASSERT( !_consumer_broker->connected(), broker_already_running, "message handlers should be added prior to amqp connection" );
 
    _message_handlers.push_back(
       {

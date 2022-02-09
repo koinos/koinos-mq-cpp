@@ -31,12 +31,8 @@ private:
    std::mutex                      _amqp_mutex;
    message_broker::on_connect_func _on_connect_func;
    message_broker&                 _message_broker;
-   static constexpr uint64_t       _max_retry_time = 30000;
-   retry_policy                    _retry_policy = retry_policy::exponential_backoff;
 
    std::optional< std::string > error_info( amqp_rpc_reply_t r ) noexcept;
-
-   error_code assert_connection() noexcept;
 
    void disconnect_lockfree() noexcept;
 
@@ -52,17 +48,11 @@ public:
    message_broker_impl( message_broker& m );
    ~message_broker_impl();
 
-   error_code connect(
-      const std::string& url,
-      retry_policy p,
-      message_broker::on_connect_func f
-   ) noexcept;
-
-   error_code connection_loop( retry_policy policy ) noexcept;
+   error_code connect( const std::string& url, message_broker::on_connect_func f ) noexcept;
 
    void disconnect() noexcept;
 
-   bool is_connected() noexcept;
+   bool connected() noexcept;
 
    error_code publish( const message& msg ) noexcept;
 
@@ -140,7 +130,7 @@ void message_broker_impl::disconnect_lockfree() noexcept
    _connection = nullptr;
 }
 
-bool message_broker_impl::is_connected() noexcept
+bool message_broker_impl::connected() noexcept
 {
    std::lock_guard< std::mutex > lock( _amqp_mutex );
    return _connection != nullptr;
@@ -148,9 +138,8 @@ bool message_broker_impl::is_connected() noexcept
 
 error_code message_broker_impl::publish( const message& msg ) noexcept
 {
-   auto ec = assert_connection();
-   if ( ec != error_code::success )
-      return ec;
+   if ( !connected() )
+      return error_code::failure;
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -270,25 +259,12 @@ error_code message_broker_impl::connect_lockfree(
 
 error_code message_broker_impl::connect(
    const std::string& url,
-   retry_policy p,
    message_broker::on_connect_func f ) noexcept
 {
    _on_connect_func = f;
-   _retry_policy = p;
    _amqp_url = url;
    _running = true;
 
-   if ( connection_loop( _retry_policy ) != error_code::success )
-   {
-      _running = false;
-      return error_code::failure;
-   }
-
-   return error_code::success;
-}
-
-error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
-{
    std::vector< char > tmp_url( _amqp_url.begin(), _amqp_url.end() );
    tmp_url.push_back( '\0' );
 
@@ -301,47 +277,22 @@ error_code message_broker_impl::connection_loop( retry_policy p ) noexcept
       return error_code::failure;
    }
 
-   uint64_t amqp_sleep_ms = 1000;
+   mq::error_code code = mq::error_code::failure;
 
-   while ( !_connection && _running )
    {
-      mq::error_code result = mq::error_code::failure;
+      std::lock_guard< std::mutex > lock( _amqp_mutex );
 
-      {
-         std::lock_guard< std::mutex > lock( _amqp_mutex );
-
-         result = connect_lockfree(
-            std::string( cinfo.host ),
-            uint16_t( cinfo.port ),
-            std::string( "/" ) + cinfo.vhost,
-            std::string( cinfo.user ),
-            std::string( cinfo.password )
-         );
-      }
-
-      if ( result == error_code::success )
-         break;
-
-      switch ( p )
-      {
-      case retry_policy::none:
-         return error_code::failure;
-         break;
-
-      case retry_policy::exponential_backoff:
-         LOG(warning) << "Failed to connect to AMQP server, trying again in " << amqp_sleep_ms << "ms" ;
-         {
-            std::unique_lock< std::mutex > lck( _running_cv_mutex );
-            _running_cv.wait_for( _running_cv_mutex, std::chrono::milliseconds( amqp_sleep_ms ), [&]() { return !_running; } );
-         }
-         amqp_sleep_ms = std::min( amqp_sleep_ms * 2, _max_retry_time );
-         continue;
-         break;
-      }
+      code = connect_lockfree(
+         std::string( cinfo.host ),
+         uint16_t( cinfo.port ),
+         std::string( "/" ) + cinfo.vhost,
+         std::string( cinfo.user ),
+         std::string( cinfo.password )
+      );
    }
 
-   if ( !_running )
-      return error_code::failure;
+   if ( code != error_code::success )
+      return code;
 
    if ( _on_connect_func( _message_broker ) == error_code::failure )
    {
@@ -525,9 +476,8 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 {
    std::pair< error_code, std::shared_ptr< message > > result;
 
-   result.first = assert_connection();
-   if ( result.first != error_code::success )
-      return result;
+   if ( !connected() )
+      return std::make_pair( error_code::failure, nullptr );
 
    {
       std::lock_guard< std::mutex > lock( _amqp_mutex );
@@ -623,32 +573,6 @@ error_code message_broker_impl::ack_message( uint64_t delivery_tag ) noexcept
    return err != AMQP_STATUS_OK ? error_code::failure : error_code::success;
 }
 
-error_code message_broker_impl::assert_connection() noexcept
-{
-   if ( is_connected() )
-      return error_code::success;
-
-   if ( _retry_policy != retry_policy::none )
-   {
-      LOG(warning) << "Lost connection to the AMQP server, attempting to reconnect...";
-      auto ec = connection_loop( _retry_policy );
-      if ( ec != error_code::success )
-      {
-         return error_code::failure;
-      }
-      else
-      {
-         LOG(info) << "Reestablished AMQP server connection";
-      }
-   }
-   else
-   {
-      return error_code::failure;
-   }
-
-   return error_code::success;
-}
-
 } // detail
 
 message_broker::message_broker()
@@ -658,9 +582,9 @@ message_broker::message_broker()
 
 message_broker::~message_broker() = default;
 
-error_code message_broker::connect( const std::string& url, retry_policy p, on_connect_func f ) noexcept
+error_code message_broker::connect( const std::string& url, on_connect_func f ) noexcept
 {
-   return _message_broker_impl->connect( url, p, f );
+   return _message_broker_impl->connect( url, f );
 }
 
 void message_broker::disconnect() noexcept
@@ -668,9 +592,9 @@ void message_broker::disconnect() noexcept
    _message_broker_impl->disconnect();
 }
 
-bool message_broker::is_connected() noexcept
+bool message_broker::connected() noexcept
 {
-   return _message_broker_impl->is_connected();
+   return _message_broker_impl->connected();
 }
 
 error_code message_broker::publish( const message& msg ) noexcept

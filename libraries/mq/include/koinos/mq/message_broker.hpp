@@ -51,12 +51,11 @@ public:
 
    error_code connect(
       const std::string& url,
-      retry_policy p = retry_policy::exponential_backoff,
       on_connect_func f = []( message_broker& m ){ return error_code::success; }
    ) noexcept;
 
    void disconnect() noexcept;
-   bool is_connected() noexcept;
+   bool connected() noexcept;
 
    error_code publish( const message& msg ) noexcept;
 
