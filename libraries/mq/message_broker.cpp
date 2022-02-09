@@ -23,11 +23,9 @@ class message_broker_impl final
 {
 private:
    std::atomic_bool                _running = false;
-   std::string                     _amqp_url;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
    std::mutex                      _amqp_mutex;
-   message_broker::on_connect_func _on_connect_func;
    message_broker&                 _message_broker;
 
    std::optional< std::string > error_info( amqp_rpc_reply_t r ) noexcept;
@@ -46,7 +44,7 @@ public:
    message_broker_impl( message_broker& m );
    ~message_broker_impl();
 
-   error_code connect( const std::string& url, message_broker::on_connect_func f ) noexcept;
+   error_code connect( const std::string& url, message_broker::on_connect_func fn ) noexcept;
 
    void disconnect() noexcept;
 
@@ -256,13 +254,11 @@ error_code message_broker_impl::connect_lockfree(
 
 error_code message_broker_impl::connect(
    const std::string& url,
-   message_broker::on_connect_func f ) noexcept
+   message_broker::on_connect_func fn ) noexcept
 {
-   _on_connect_func = f;
-   _amqp_url = url;
    _running = true;
 
-   std::vector< char > tmp_url( _amqp_url.begin(), _amqp_url.end() );
+   std::vector< char > tmp_url( url.begin(), url.end() );
    tmp_url.push_back( '\0' );
 
    amqp_connection_info cinfo;
@@ -291,7 +287,7 @@ error_code message_broker_impl::connect(
    if ( code != error_code::success )
       return code;
 
-   if ( _on_connect_func( _message_broker ) == error_code::failure )
+   if ( fn( _message_broker ) == error_code::failure )
    {
       LOG(error) << "Failure during connection callback";
       std::lock_guard< std::mutex > lock( _amqp_mutex );

@@ -1,4 +1,5 @@
 #include <koinos/mq/client.hpp>
+#include <koinos/mq/retryer.hpp>
 #include <koinos/mq/util.hpp>
 #include <koinos/log.hpp>
 #include <koinos/util/hex.hpp>
@@ -91,13 +92,16 @@ private:
    boost::asio::io_context&                             _io_context;
    boost::asio::signal_set                              _signals;
    std::atomic_bool                                     _stopped = false;
+   retryer                                              _retryer;
+   std::string                                          _amqp_url;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
    _io_context( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
-   _signals( io_context )
+   _signals( io_context ),
+   _retryer( io_context, _stopped, std::chrono::milliseconds( _max_expiration ) )
 {
    _signals.add( SIGINT );
    _signals.add( SIGTERM );
@@ -126,30 +130,37 @@ std::string client_impl::get_queue_name()
 
 void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
-//   KOINOS_ASSERT( !is_running(), broker_already_running, "client is already running" );
+   _amqp_url = amqp_url;
 
-   error_code ec;
-
-   ec = _writer_broker->connect( amqp_url );
-
-   if ( ec != error_code::success )
-   {
-      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
-   }
-
-   ec = _reader_broker->connect(
-      amqp_url,
-      [this]( message_broker& m ) -> error_code
+   error_code ec = _retryer.with_policy(
+      policy,
+      [&]() -> error_code
       {
-         return this->on_connect( m );
-      }
+         error_code e;
+
+         e = _writer_broker->connect( _amqp_url );
+
+         if ( e != error_code::success )
+            return e;
+
+         e = _reader_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e != error_code::success )
+            _writer_broker->disconnect();
+
+         return ec;
+      },
+      "connect client to the AMQP server and declare queues"
    );
 
    if ( ec != error_code::success )
-   {
-      _writer_broker->disconnect();
-      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
-   }
+      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
    {
@@ -248,21 +259,45 @@ void client_impl::consume( const boost::system::error_code& ec )
    if ( ec == boost::asio::error::operation_aborted || _stopped )
       return abort();
 
-   auto result = _reader_broker->consume();
+   error_code e;
+   std::shared_ptr< message > m;
 
-   if ( result.first == error_code::time_out ) {}
-   else if ( result.first != error_code::success )
+   _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         std::tie( e, m ) = _reader_broker->consume();
+
+         if ( e != error_code::failure )
+            return e;
+
+         _reader_broker->disconnect();
+
+         e = _reader_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         return e;
+      },
+      "consume client message"
+   );
+
+   if ( e == error_code::time_out ) {}
+   else if ( e != error_code::success )
    {
       LOG(warning) << "Failed to consume message";
    }
-   else if ( !result.second )
+   else if ( !m )
    {
       LOG(warning) << "Consumption succeeded but resulted in an empty message";
    }
    else
    {
-      auto& msg = result.second;
-      if ( !msg->correlation_id.has_value() )
+      if ( !m->correlation_id.has_value() )
       {
          LOG(warning) << "Received message without a correlation id";
       }
@@ -270,10 +305,10 @@ void client_impl::consume( const boost::system::error_code& ec )
       {
          std::lock_guard< std::mutex > lock( _requests_mutex );
          const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
-         auto it = idx.find( *msg->correlation_id );
+         auto it = idx.find( *m->correlation_id );
          if ( it != idx.end() )
          {
-            it->response.set_value( std::move( msg->data ) );
+            it->response.set_value( std::move( m->data ) );
             _requests.erase( it );
          }
       }
@@ -379,7 +414,22 @@ std::shared_future< std::string > client_impl::rpc(
 
    LOG(debug) << " -> data:           " << util::to_hex( msg->data );
 
-   auto err = _writer_broker->publish( *msg );
+   auto err = _retryer.with_policy(
+      policy,
+      [&]() -> error_code
+      {
+         error_code e = _writer_broker->publish( *msg );
+
+         if ( e == error_code::success )
+            return e;
+
+         _writer_broker->disconnect();
+         e = _writer_broker->connect( _amqp_url );
+         return e;
+      },
+      "publish client message"
+   );
+
    if ( err != error_code::success )
    {
       promise.set_exception( std::make_exception_ptr( broker_publish_error( "error sending rpc message" ) ) );

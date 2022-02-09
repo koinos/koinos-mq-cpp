@@ -1,6 +1,7 @@
 file(GLOB HEADERS "include/koinos/mq/*.hpp")
 add_library(koinos_mq
             client.cpp
+            retryer.cpp
             request_handler.cpp
             message_broker.cpp
             ${HEADERS})
