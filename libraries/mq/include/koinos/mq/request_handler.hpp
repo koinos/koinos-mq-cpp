@@ -6,6 +6,7 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <boost/container/flat_map.hpp>
 #include <boost/thread/sync_bounded_queue.hpp>
 #include <boost/tuple/tuple.hpp>
