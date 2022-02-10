@@ -205,7 +205,7 @@ bool client_impl::running() const
 
 bool client_impl::connected() const
 {
-   return _writer_broker->connected() || _reader_broker->connected();
+   return _writer_broker->connected() && _reader_broker->connected();
 }
 
 error_code client_impl::on_connect( message_broker& m )
@@ -223,7 +223,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while declaring broadcast exchange";
+      LOG(error) << "Error while declaring broadcast exchange for client";
       return ec;
    }
 
@@ -238,7 +238,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while declaring rpc exchange";
+      LOG(error) << "Error while declaring RPC exchange for client";
       return ec;
    }
 
@@ -252,7 +252,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( queue_res.first != error_code::success )
    {
-      LOG(error) << "Error while declaring temporary queue";
+      LOG(error) << "Error while declaring temporary queue for client";
       return queue_res.first;
    }
 
@@ -261,7 +261,7 @@ error_code client_impl::on_connect( message_broker& m )
    ec = m.bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while binding temporary queue";
+      LOG(error) << "Error while binding temporary queue for client";
       return ec;
    }
 
@@ -306,20 +306,31 @@ void client_impl::consume()
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
    {
-      LOG(warning) << "Failed to consume message";
+      LOG(warning) << "Client failed to consume message";
    }
    else if ( !msg )
    {
-      LOG(warning) << "Consumption succeeded but resulted in an empty message";
+      LOG(warning) << "Client message consumption succeeded but resulted in an empty message";
    }
    else
    {
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(warning) << "Received message without a correlation id";
+         LOG(warning) << "Client received message without a correlation id";
       }
       else
       {
+         LOG(debug) << "Client received message";
+         LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
+         LOG(debug) << " -> exchange:       " << msg->exchange;
+         LOG(debug) << " -> routing_key:    " << msg->routing_key;
+         LOG(debug) << " -> content_type:   " << msg->content_type;
+         if ( msg->reply_to )
+            LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
+         if ( msg->expiration )
+            LOG(debug) << " -> expiration:     " << msg->expiration.value();
+         LOG(debug) << " -> data:           " << util::to_hex( msg->data );
+
          std::lock_guard< std::mutex > lock( _requests_mutex );
          const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
          auto it = idx.find( *msg->correlation_id );
@@ -330,7 +341,7 @@ void client_impl::consume()
          }
          else
          {
-            LOG(warning) << "Could not find correlation ID in request set: " << *msg->correlation_id;
+            LOG(warning) << "Client could not find correlation ID in request set: " << *msg->correlation_id;
          }
       }
    }
@@ -367,6 +378,17 @@ void client_impl::policy_handler()
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
+      LOG(debug) << "Client handling policy for request at current time: " << std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count();
+      LOG(debug) << " -> correlation_id: " << it->msg->correlation_id.value();
+      LOG(debug) << " -> exchange:       " << it->msg->exchange;
+      LOG(debug) << " -> routing_key:    " << it->msg->routing_key;
+      LOG(debug) << " -> content_type:   " << it->msg->content_type;
+      if ( it->msg->reply_to )
+         LOG(debug) << " -> reply_to:       " << it->msg->reply_to.value();
+      if ( it->msg->expiration )
+         LOG(debug) << " -> expiration:     " << it->msg->expiration.value();
+      LOG(debug) << " -> data:           " << util::to_hex( it->msg->data );
+
       if ( it->expiration > std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() )
          break;
 
@@ -377,12 +399,14 @@ void client_impl::policy_handler()
          idx.erase( it );
          return;
       case retry_policy::exponential_backoff:
-         LOG(warning) << "No response to message with correlation ID: " << it->msg->correlation_id.value() << ", within " << it->msg->expiration.value() << "ms";
+         LOG(warning) << "No response to client request with correlation ID: " << it->msg->correlation_id.value() << ", within " << it->msg->expiration.value() << "ms";
          LOG(debug) << " -> correlation_id: " << it->msg->correlation_id.value();
          LOG(debug) << " -> exchange:       " << it->msg->exchange;
          LOG(debug) << " -> routing_key:    " << it->msg->routing_key;
          LOG(debug) << " -> content_type:   " << it->msg->content_type;
-         LOG(debug) << " -> reply_to:       " << it->msg->reply_to.value();
+         if ( it->msg->reply_to )
+            LOG(debug) << " -> reply_to:       " << it->msg->reply_to.value();
+         if ( it->msg->expiration )
          LOG(debug) << " -> expiration:     " << it->msg->expiration.value();
          LOG(debug) << " -> data:           " << util::to_hex( it->msg->data );
 
@@ -393,7 +417,7 @@ void client_impl::policy_handler()
          it->msg->expiration     = std::min( it->msg->expiration.value() * 2, _max_expiration );
          it->msg->reply_to       = get_queue_name();
 
-         LOG(debug) << "Resending message (correlation ID: " << old_correlation_id << ") with new correlation ID: "
+         LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
             << it->msg->correlation_id.value() << ", expiration: " << it->msg->expiration.value();
 
          request r;
@@ -412,7 +436,7 @@ void client_impl::policy_handler()
 
          if ( success )
          {
-            auto err = publish( *iter->msg, iter->policy, "client_rpc_republication" );
+            auto err = publish( *iter->msg, iter->policy, "client rpc republication" );
 
             if ( err != error_code::success )
             {
@@ -455,7 +479,7 @@ std::shared_future< std::string > client_impl::rpc(
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
 
-   LOG(debug) << "Sending RPC";
+   LOG(debug) << "Sending RPC from client";
    LOG(debug) << " -> correlation_id: " << *msg->correlation_id;
    LOG(debug) << " -> exchange:       " << msg->exchange;
    LOG(debug) << " -> routing_key:    " << msg->routing_key;
@@ -486,6 +510,11 @@ std::shared_future< std::string > client_impl::rpc(
       std::tie( iter, success ) = _requests.insert( std::move( r ) );
       KOINOS_ASSERT( success, request_insertion_error, "failed to insert request, possibly a correlation id collision" );
    }
+
+   if ( iter->correlation_id() )
+      LOG(debug) << "Publishing RPC from client with correlation ID: " << *iter->correlation_id() << ", and expiration: " << iter->expiration;
+   else
+      LOG(debug) << "Publishing RPC from client without a correlation ID, and expiration: " << iter->expiration;
 
    auto err = publish( *msg, policy, "client rpc publication" );
 
