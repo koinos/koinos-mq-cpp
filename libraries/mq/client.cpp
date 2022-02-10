@@ -23,9 +23,14 @@ namespace koinos::mq {
 
 namespace detail {
 
+std::string to_string( std::chrono::time_point< std::chrono::system_clock > t )
+{
+   return std::to_string( std::chrono::duration_cast< std::chrono::milliseconds >( t.time_since_epoch() ).count() );
+}
+
 struct request
 {
-   uint64_t                                               expiration;
+   std::chrono::time_point< std::chrono::system_clock >   expiration;
    retry_policy                                           policy;
    mutable std::shared_ptr< std::promise< std::string > > response;
    mutable std::shared_ptr< message >                     msg;
@@ -45,7 +50,7 @@ typedef boost::multi_index::multi_index_container<
     boost::multi_index::ordered_unique<
       boost::multi_index::tag< by_correlation_id >, boost::multi_index::const_mem_fun< request, std::optional< std::string >&, &request::correlation_id > >,
     boost::multi_index::ordered_non_unique<
-      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, uint64_t, &request::expiration > >
+      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, std::chrono::time_point< std::chrono::system_clock >, &request::expiration > >
    >
 > request_set;
 
@@ -320,16 +325,7 @@ void client_impl::consume()
       }
       else
       {
-         LOG(debug) << "Client received message";
-         LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
-         LOG(debug) << " -> exchange:       " << msg->exchange;
-         LOG(debug) << " -> routing_key:    " << msg->routing_key;
-         LOG(debug) << " -> content_type:   " << msg->content_type;
-         if ( msg->reply_to )
-            LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
-         if ( msg->expiration )
-            LOG(debug) << " -> expiration:     " << msg->expiration.value();
-         LOG(debug) << " -> data:           " << util::to_hex( msg->data );
+         LOG(debug) << "Client received message" << to_string( *msg );
 
          std::lock_guard< std::mutex > lock( _requests_mutex );
          const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
@@ -378,18 +374,9 @@ void client_impl::policy_handler()
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
-      LOG(debug) << "Client handling policy for request at current time: " << std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count();
-      LOG(debug) << " -> correlation_id: " << it->msg->correlation_id.value();
-      LOG(debug) << " -> exchange:       " << it->msg->exchange;
-      LOG(debug) << " -> routing_key:    " << it->msg->routing_key;
-      LOG(debug) << " -> content_type:   " << it->msg->content_type;
-      if ( it->msg->reply_to )
-         LOG(debug) << " -> reply_to:       " << it->msg->reply_to.value();
-      if ( it->msg->expiration )
-         LOG(debug) << " -> expiration:     " << it->msg->expiration.value();
-      LOG(debug) << " -> data:           " << util::to_hex( it->msg->data );
+      LOG(debug) << "Client handling policy for request at current time: " << to_string( std::chrono::system_clock::now() ) << ", " << to_string( *it->msg );
 
-      if ( it->expiration > std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() )
+      if ( it->expiration > std::chrono::system_clock::now() )
          break;
 
       switch ( it->policy )
@@ -400,15 +387,7 @@ void client_impl::policy_handler()
          return;
       case retry_policy::exponential_backoff:
          LOG(warning) << "No response to client request with correlation ID: " << it->msg->correlation_id.value() << ", within " << it->msg->expiration.value() << "ms";
-         LOG(debug) << " -> correlation_id: " << it->msg->correlation_id.value();
-         LOG(debug) << " -> exchange:       " << it->msg->exchange;
-         LOG(debug) << " -> routing_key:    " << it->msg->routing_key;
-         LOG(debug) << " -> content_type:   " << it->msg->content_type;
-         if ( it->msg->reply_to )
-            LOG(debug) << " -> reply_to:       " << it->msg->reply_to.value();
-         if ( it->msg->expiration )
-         LOG(debug) << " -> expiration:     " << it->msg->expiration.value();
-         LOG(debug) << " -> data:           " << util::to_hex( it->msg->data );
+         LOG(debug) << "Client applying exponential backoff for message: " << to_string( *it->msg );
 
          // Adjust our message for another attempt
          auto old_correlation_id = it->msg->correlation_id.value();
@@ -421,7 +400,7 @@ void client_impl::policy_handler()
             << it->msg->correlation_id.value() << ", expiration: " << it->msg->expiration.value();
 
          request r;
-         r.expiration     = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() + *it->msg->expiration;
+         r.expiration     = std::chrono::system_clock::now() + std::chrono::milliseconds( *it->msg->expiration );
          r.policy         = it->policy;
          r.response       = it->response;
          r.msg            = it->msg;
@@ -479,25 +458,15 @@ std::shared_future< std::string > client_impl::rpc(
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
 
-   LOG(debug) << "Sending RPC from client";
-   LOG(debug) << " -> correlation_id: " << *msg->correlation_id;
-   LOG(debug) << " -> exchange:       " << msg->exchange;
-   LOG(debug) << " -> routing_key:    " << msg->routing_key;
-   LOG(debug) << " -> content_type:   " << msg->content_type;
-   LOG(debug) << " -> reply_to:       " << *msg->reply_to;
-
-   if ( msg->expiration.has_value() )
-      LOG(debug) << " -> expiration:     " << *msg->expiration;
-
-   LOG(debug) << " -> data:           " << util::to_hex( msg->data );
+   LOG(debug) << "Sending RPC from client: " << to_string( *msg );
 
    std::shared_future< std::string > fut = promise->get_future();
 
    request r;
    if ( msg->expiration )
-      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count();
+      r.expiration  = std::chrono::system_clock::now();
    else
-      r.expiration  = std::chrono::duration_cast< std::chrono::milliseconds >( std::chrono::system_clock::now().time_since_epoch() ).count() + *msg->expiration;
+      r.expiration  = std::chrono::system_clock::now() + std::chrono::milliseconds( *msg->expiration );
    r.policy         = policy;
    r.response       = promise;
    r.msg            = msg;
@@ -512,9 +481,9 @@ std::shared_future< std::string > client_impl::rpc(
    }
 
    if ( iter->correlation_id() )
-      LOG(debug) << "Publishing RPC from client with correlation ID: " << *iter->correlation_id() << ", and expiration: " << iter->expiration;
+      LOG(debug) << "Publishing RPC from client with correlation ID: " << *iter->correlation_id() << ", and expiration: " << to_string( iter->expiration );
    else
-      LOG(debug) << "Publishing RPC from client without a correlation ID, and expiration: " << iter->expiration;
+      LOG(debug) << "Publishing RPC from client without a correlation ID, and expiration: " << to_string( iter->expiration );
 
    auto err = publish( *msg, policy, "client rpc publication" );
 
