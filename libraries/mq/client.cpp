@@ -109,6 +109,11 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _signals.add( SIGQUIT );
 #endif // defined(SIGQUIT)
    static_assert( std::atomic_bool::is_always_lock_free );
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+   } );
 }
 
 client_impl::~client_impl()
@@ -131,11 +136,6 @@ std::string client_impl::get_queue_name()
 void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
    _amqp_url = amqp_url;
-
-   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
-   {
-      _stopped = true;
-   } );
 
    error_code code = _retryer.with_policy(
       policy,
@@ -259,17 +259,20 @@ void client_impl::consume( const boost::system::error_code& ec )
    if ( ec == boost::asio::error::operation_aborted || _stopped )
       return abort();
 
-   error_code e;
-   std::shared_ptr< message > m;
+   error_code code;
+   std::shared_ptr< message > msg;
 
-   e = _retryer.with_policy(
+   code = _retryer.with_policy(
       retry_policy::exponential_backoff,
       [&]() -> error_code
       {
-         std::tie( e, m ) = _reader_broker->consume();
+         auto [ e, m ] = _reader_broker->consume();
 
          if ( e != error_code::failure )
+         {
+            msg = m;
             return e;
+         }
 
          _reader_broker->disconnect();
 
@@ -286,18 +289,18 @@ void client_impl::consume( const boost::system::error_code& ec )
       "consume client message"
    );
 
-   if ( e == error_code::time_out ) {}
-   else if ( e != error_code::success )
+   if ( code == error_code::time_out ) {}
+   else if ( code != error_code::success )
    {
       LOG(warning) << "Failed to consume message";
    }
-   else if ( !m )
+   else if ( !msg )
    {
       LOG(warning) << "Consumption succeeded but resulted in an empty message";
    }
    else
    {
-      if ( !m->correlation_id.has_value() )
+      if ( !msg->correlation_id.has_value() )
       {
          LOG(warning) << "Received message without a correlation id";
       }
@@ -305,10 +308,10 @@ void client_impl::consume( const boost::system::error_code& ec )
       {
          std::lock_guard< std::mutex > lock( _requests_mutex );
          const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
-         auto it = idx.find( *m->correlation_id );
+         auto it = idx.find( *msg->correlation_id );
          if ( it != idx.end() )
          {
-            it->response.set_value( std::move( m->data ) );
+            it->response.set_value( std::move( msg->data ) );
             _requests.erase( it );
          }
       }

@@ -42,6 +42,7 @@ private:
    std::atomic_bool&                  _stopped;
    boost::asio::high_resolution_timer _timer;
    std::chrono::milliseconds          _max_timeout;
+   boost::asio::signal_set            _signals;
 };
 
 } // koinos::mq
