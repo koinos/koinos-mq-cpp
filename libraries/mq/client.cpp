@@ -158,7 +158,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
          return e;
       },
-      "connect client to AMQP"
+      "client connection to AMQP"
    );
 
    if ( code != error_code::success )
@@ -286,7 +286,7 @@ void client_impl::consume()
 
          return e;
       },
-      "consume client message"
+      "client message consumption"
    );
 
    if ( code == error_code::time_out ) {}
@@ -424,6 +424,7 @@ std::shared_future< std::string > client_impl::rpc(
       [&]() -> error_code
       {
          error_code e = _writer_broker->publish( *msg );
+         LOG(info) << "Published RPC with code: " << static_cast< std::underlying_type< error_code >::type >( e );
 
          if ( e == error_code::success )
             return e;
@@ -432,7 +433,7 @@ std::shared_future< std::string > client_impl::rpc(
          e = _writer_broker->connect( _amqp_url );
          return e;
       },
-      "publish client message"
+      "sending client RPC"
    );
 
    if ( err != error_code::success )
@@ -457,6 +458,8 @@ std::shared_future< std::string > client_impl::rpc(
 
    const auto& [ iter, success ] = _requests.insert( std::move( r ) );
    KOINOS_ASSERT( success, request_insertion_error, "failed to insert request" );
+
+   LOG(info) << "Inserted request in to set";
 
    return fut;
 }

@@ -12,16 +12,35 @@ namespace koinos::mq {
 retryer::retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::chrono::milliseconds max_timeout ) :
    _ioc( ioc ),
    _stopped( stopped ),
-   _timer( ioc ),
    _max_timeout( max_timeout ) {}
 
 void retryer::cancel()
 {
-   _timer.cancel();
+   std::lock_guard guard( _timer_set_mutex );
+   auto it = _timer_set.begin();
+   while ( !_timer_set.empty() )
+   {
+      it->get()->cancel();
+      _timer_set.erase( it );
+      it = _timer_set.begin();
+   }
+}
+
+void retryer::add_timer( timer_ptr t )
+{
+   std::lock_guard guard( _timer_set_mutex );
+   _timer_set.insert( t );
+}
+
+void retryer::remove_timer( timer_ptr t )
+{
+   std::lock_guard guard( _timer_set_mutex );
+   _timer_set.erase( t );
 }
 
 void retryer::retry_logic(
    const boost::system::error_code& ec,
+   std::shared_ptr< boost::asio::high_resolution_timer > timer,
    std::shared_ptr< std::promise< error_code > > p,
    std::function< error_code( void ) > f,
    std::chrono::milliseconds t,
@@ -30,6 +49,7 @@ void retryer::retry_logic(
    if ( ec == boost::asio::error::operation_aborted || _stopped )
    {
       p->set_value( error_code::failure );
+      remove_timer( timer );
       return;
    }
 
@@ -40,14 +60,15 @@ void retryer::retry_logic(
       t = std::min( t * 2, _max_timeout );
 
       if ( m )
-         LOG(warning) << "Unable to " << *m << ", retrying in " << t.count() << "ms";
+         LOG(warning) << "Failure during " << *m << ", retrying in " << t.count() << "ms";
 
-      _timer.expires_after( t );
-      _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, p, f, t, m ) );
+      timer->expires_after( t );
+      timer->async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, timer, p, f, t, m ) );
    }
    else
    {
       p->set_value( e );
+      remove_timer( timer );
    }
 }
 
@@ -63,6 +84,9 @@ error_code retryer::with_policy(
    std::shared_ptr< std::promise< error_code > > promise = std::make_shared< std::promise< error_code > >();
    std::future fut = promise->get_future();
 
+   std::shared_ptr< boost::asio::high_resolution_timer > timer = std::make_shared< boost::asio::high_resolution_timer >( _ioc );
+   add_timer( timer );
+
    switch ( policy )
    {
       case retry_policy::none:
@@ -70,10 +94,10 @@ error_code retryer::with_policy(
          break;
       case retry_policy::exponential_backoff:
          if ( message )
-            LOG(warning) << "Unable to " << *message << ", retrying in " << timeout.count() << "ms";
+            LOG(warning) << "Failure during " << *message << ", retrying in " << timeout.count() << "ms";
 
-         _timer.expires_after( timeout );
-         _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, promise, fn, timeout, message ) );
+         timer->expires_after( timeout );
+         timer->async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, timer, promise, fn, timeout, message ) );
          break;
    }
 
