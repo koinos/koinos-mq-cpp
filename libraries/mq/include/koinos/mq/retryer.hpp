@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <future>
 #include <optional>
 
 using namespace std::chrono_literals;
@@ -28,6 +29,14 @@ public:
       std::chrono::milliseconds timeout = 1000ms
    );
 private:
+   void retry_logic(
+      const boost::system::error_code& ec,
+      std::shared_ptr< std::promise< error_code > > p,
+      std::function< error_code( void ) > f,
+      std::chrono::milliseconds t,
+      std::optional< std::string > m
+   );
+
    boost::asio::io_context&           _ioc;
    std::atomic_bool&                  _stopped;
    boost::asio::high_resolution_timer _timer;
