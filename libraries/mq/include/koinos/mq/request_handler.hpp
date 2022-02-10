@@ -2,6 +2,7 @@
 
 #include <koinos/mq/exception.hpp>
 #include <koinos/mq/message_broker.hpp>
+#include <koinos/mq/retryer.hpp>
 #include <koinos/log.hpp>
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -97,6 +98,8 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       binding_queue_map                 _queue_bindings;
       msg_routing_map                   _handler_map;
 
+      std::string                       _amqp_url;
+
       synced_msg_queue                  _input_queue{ constants::max_queue_size };
       synced_msg_queue                  _output_queue{ constants::max_queue_size };
 
@@ -105,6 +108,7 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
       boost::asio::signal_set           _signals;
       std::atomic_bool                  _stopped = false;
+      retryer                           _retryer;
 };
 
 } // koinos::mq

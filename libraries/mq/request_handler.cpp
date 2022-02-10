@@ -68,7 +68,8 @@ request_handler::request_handler( boost::asio::io_context& io_context ) :
    _publisher_broker( std::make_unique< message_broker >() ),
    _consumer_broker( std::make_unique< message_broker >() ),
    _io_context( io_context ),
-   _signals( io_context )
+   _signals( io_context ),
+   _retryer( io_context, _stopped, std::chrono::milliseconds( 30000 ) )
 {
    _signals.add( SIGINT );
    _signals.add( SIGTERM );
@@ -102,23 +103,36 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
    KOINOS_ASSERT( !connected(), request_handler_already_connected, "request handler is already connected" );
    KOINOS_ASSERT( running(), request_handler_not_running, "request handler is not running" );
 
-   error_code ec;
+   _amqp_url = amqp_url;
 
-   ec = _publisher_broker->connect( amqp_url );
-   if ( ec != error_code::success )
-   {
-      KOINOS_THROW( mq_connection_failure, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
-   }
-
-   ec = _consumer_broker->connect(
-      amqp_url,
-      [this]( message_broker& m )
+   error_code code = _retryer.with_policy(
+      policy,
+      [&]() -> error_code
       {
-         return this->on_connect( m );
-      }
+         error_code e;
+
+         e = _publisher_broker->connect( _amqp_url );
+
+         if ( e != error_code::success )
+            return e;
+
+         e = _consumer_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e != error_code::success )
+            _publisher_broker->disconnect();
+
+         return e;
+      },
+      "request handler connection to AMQP"
    );
 
-   if ( ec != error_code::success )
+   if ( code != error_code::success )
    {
       _publisher_broker->disconnect();
       KOINOS_THROW( mq_connection_failure, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
@@ -263,7 +277,21 @@ void request_handler::publish()
 
    _output_queue.pull_front( m );
 
-   auto r = _publisher_broker->publish( *m );
+   auto r = _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         error_code e = _publisher_broker->publish( *m );
+
+         if ( e == error_code::success )
+            return e;
+
+         _publisher_broker->disconnect();
+         e = _publisher_broker->connect( _amqp_url );
+         return e;
+      },
+      "request handler publication"
+   );
 
    if ( r != error_code::success )
    {
@@ -276,20 +304,48 @@ void request_handler::consume()
    if ( _stopped )
       return;
 
-   auto result = _consumer_broker->consume();
+   error_code code;
+   std::shared_ptr< message > msg;
+
+   code = _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         auto [ e, m ] = _consumer_broker->consume();
+
+         if ( e != error_code::failure )
+         {
+            msg = m;
+            return e;
+         }
+
+         _consumer_broker->disconnect();
+
+         e = _consumer_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         return e;
+      },
+      "request handler message consumption"
+   );
 
    boost::asio::post( _io_context, std::bind( &request_handler::consume, this ) );
 
-   if ( result.first == error_code::time_out ) {}
-   else if ( result.first != error_code::success )
+   if ( code == error_code::time_out ) {}
+   else if ( code != error_code::success )
    {
       LOG(warning) << "Request handler failed to consume message";
    }
    else
    {
-      LOG(debug) << "Request handler received message: " << to_string( *result.second );
+      LOG(debug) << "Request handler received message: " << to_string( *msg );
 
-      _input_queue.push_back( result.second );
+      _input_queue.push_back( msg );
 
       boost::asio::dispatch( _io_context, std::bind( &request_handler::handle_message, this ) );
    }
