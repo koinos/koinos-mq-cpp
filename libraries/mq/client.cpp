@@ -457,6 +457,8 @@ std::shared_future< std::string > client_impl::rpc(
 
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
+   else
+      KOINOS_ASSERT( policy != retry_policy::exponential_backoff, invalid_client_request, "cannot have an ${p} policy without a timeout", ("p", to_string( policy )) );
 
    LOG(debug) << "Sending RPC from client: " << to_string( *msg );
 
@@ -464,9 +466,9 @@ std::shared_future< std::string > client_impl::rpc(
 
    request r;
    if ( msg->expiration )
-      r.expiration  = std::chrono::system_clock::now();
+      r.expiration  = std::chrono::system_clock::now() + timeout;
    else
-      r.expiration  = std::chrono::system_clock::now() + std::chrono::milliseconds( *msg->expiration );
+      r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
    r.policy         = policy;
    r.response       = promise;
    r.msg            = msg;
