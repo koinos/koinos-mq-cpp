@@ -22,7 +22,7 @@ void retryer::retry_logic(
    std::chrono::milliseconds t,
    std::optional< std::string > m )
 {
-   if ( _stopped )
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
    {
       p->set_value( error_code::failure );
       return;
@@ -38,7 +38,7 @@ void retryer::retry_logic(
          LOG(warning) << "Unable to " << *m << ", retrying in " << t.count() << "ms";
 
       _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, p, f, t, m ) );
-      _timer.expires_from_now( t );
+      _timer.expires_after( t );
    }
    else
    {
@@ -68,7 +68,7 @@ error_code retryer::with_policy(
             LOG(warning) << "Unable to " << *message << ", retrying in " << timeout.count() << "ms";
 
          _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, promise, fn, timeout, message ) );
-         _timer.expires_from_now( timeout );
+         _timer.expires_after( timeout );
          break;
    }
 
