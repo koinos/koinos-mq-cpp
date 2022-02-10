@@ -15,6 +15,11 @@ retryer::retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::
    _timer( ioc ),
    _max_timeout( max_timeout ) {}
 
+retryer::~retryer()
+{
+   _timer.cancel();
+}
+
 void retryer::retry_logic(
    const boost::system::error_code& ec,
    std::shared_ptr< std::promise< error_code > > p,
@@ -37,8 +42,8 @@ void retryer::retry_logic(
       if ( m )
          LOG(warning) << "Unable to " << *m << ", retrying in " << t.count() << "ms";
 
-      _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, p, f, t, m ) );
       _timer.expires_after( t );
+      _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, p, f, t, m ) );
    }
    else
    {
@@ -67,8 +72,8 @@ error_code retryer::with_policy(
          if ( message )
             LOG(warning) << "Unable to " << *message << ", retrying in " << timeout.count() << "ms";
 
-         _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, promise, fn, timeout, message ) );
          _timer.expires_after( timeout );
+         _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, promise, fn, timeout, message ) );
          break;
    }
 

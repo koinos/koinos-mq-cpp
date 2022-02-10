@@ -161,7 +161,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
          return e;
       },
-      "connect client to the AMQP server and declare queues"
+      "connect client to AMQP"
    );
 
    if ( code != error_code::success )

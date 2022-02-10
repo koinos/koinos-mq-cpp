@@ -21,6 +21,7 @@ class retryer final
 {
 public:
    retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::chrono::milliseconds max_timeout );
+   ~retryer();
 
    error_code with_policy(
       retry_policy policy,
