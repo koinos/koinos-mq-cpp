@@ -289,9 +289,6 @@ void client_impl::consume()
       "client message consumption"
    );
 
-   LOG(info) << "Consumed message returned: " << static_cast< std::underlying_type< error_code >::type >( code );
-   LOG(info) << "Received message with correlation id: " << *msg->correlation_id;
-
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
    {
