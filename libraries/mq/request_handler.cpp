@@ -14,7 +14,7 @@ namespace koinos::mq {
 void request_handler::handle_message()
 {
    if ( _stopped )
-      return disconnect();
+      return abort();
 
    std::shared_ptr< message > msg;
 
@@ -96,6 +96,11 @@ void request_handler::disconnect()
 
    if ( _publisher_broker->connected() )
       _publisher_broker->disconnect();
+}
+
+void request_handler::abort()
+{
+   _retryer.cancel();
 }
 
 void request_handler::connect( const std::string& amqp_url, retry_policy policy )
@@ -271,7 +276,7 @@ void request_handler::add_msg_handler(
 void request_handler::publish()
 {
    if ( _stopped )
-      return;
+      return abort();
 
    std::shared_ptr< message > m;
 
@@ -302,7 +307,7 @@ void request_handler::publish()
 void request_handler::consume()
 {
    if ( _stopped )
-      return;
+      return abort();
 
    error_code code;
    std::shared_ptr< message > msg;

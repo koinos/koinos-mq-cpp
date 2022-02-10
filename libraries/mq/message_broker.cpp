@@ -180,7 +180,7 @@ error_code message_broker_impl::publish( const message& msg ) noexcept
 
       if ( err != AMQP_STATUS_OK )
       {
-         LOG(warning) << "Failed to publish message";
+         LOG(debug) << "Failed to publish message";
          disconnect_lockfree();
          return error_code::failure;
       }
@@ -266,7 +266,7 @@ error_code message_broker_impl::connect(
 
    if( result != AMQP_STATUS_OK )
    {
-      LOG(error) << "Unable to parse provided AMQP url";
+      LOG(debug) << "Unable to parse provided AMQP url";
       return error_code::failure;
    }
 
@@ -289,7 +289,7 @@ error_code message_broker_impl::connect(
 
    if ( fn( _message_broker ) == error_code::failure )
    {
-      LOG(error) << "Failure during connection callback";
+      LOG(debug) << "Failure during connection callback";
       std::lock_guard< std::mutex > lock( _amqp_mutex );
       disconnect_lockfree();
       return error_code::failure;
@@ -324,7 +324,7 @@ error_code message_broker_impl::declare_exchange(
 
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 
@@ -354,7 +354,7 @@ std::pair< error_code, std::string > message_broker_impl::declare_queue(
    auto reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return std::make_pair( error_code::failure, "" );
    }
 
@@ -389,7 +389,7 @@ error_code message_broker_impl::bind_queue(
    auto reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 
@@ -407,7 +407,7 @@ error_code message_broker_impl::bind_queue(
    reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(error) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 

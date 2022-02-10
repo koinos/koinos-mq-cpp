@@ -317,7 +317,7 @@ void client_impl::consume()
    }
    else if ( !msg )
    {
-      LOG(warning) << "Client message consumption succeeded but resulted in an empty message";
+      LOG(debug) << "Client message consumption succeeded but resulted in an empty message";
    }
    else
    {
