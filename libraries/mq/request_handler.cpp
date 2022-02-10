@@ -11,9 +11,9 @@
 
 namespace koinos::mq {
 
-void request_handler::handle_message( const boost::system::error_code& ec )
+void request_handler::handle_message()
 {
-   if ( ec == boost::asio::error::operation_aborted )
+   if ( _stopped )
       return disconnect();
 
    std::shared_ptr< message > msg;
@@ -50,7 +50,7 @@ void request_handler::handle_message( const boost::system::error_code& ec )
 
                      _output_queue.push_back( reply );
 
-                     boost::asio::post( _io_context, std::bind( &request_handler::publish, this, boost::system::error_code{} ) );
+                     boost::asio::post( _io_context, std::bind( &request_handler::publish, this ) );
                   }
                },
                [&]( const msg_handler_void_func& f )
@@ -76,6 +76,11 @@ request_handler::request_handler( boost::asio::io_context& io_context ) :
    _signals.add( SIGQUIT );
 #endif // defined(SIGQUIT)
    static_assert( std::atomic_bool::is_always_lock_free );
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+   } );
 }
 
 request_handler::~request_handler()
@@ -94,15 +99,15 @@ void request_handler::disconnect()
 
 void request_handler::connect( const std::string& amqp_url, retry_policy policy )
 {
-   KOINOS_ASSERT( !_publisher_broker->connected(), broker_already_running, "request handler publisher is already connected" );
-   KOINOS_ASSERT( !_consumer_broker->connected(), broker_already_running, "request handler consumer is already connected" );
+   KOINOS_ASSERT( !connected(), request_handler_already_connected, "request handler is already connected" );
+   KOINOS_ASSERT( running(), request_handler_not_running, "request handler is not running" );
 
    error_code ec;
 
    ec = _publisher_broker->connect( amqp_url );
    if ( ec != error_code::success )
    {
-      KOINOS_THROW( unable_to_connect, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
+      KOINOS_THROW( mq_connection_failure, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
    }
 
    ec = _consumer_broker->connect(
@@ -116,15 +121,10 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
    if ( ec != error_code::success )
    {
       _publisher_broker->disconnect();
-      KOINOS_THROW( unable_to_connect, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
+      KOINOS_THROW( mq_connection_failure, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
    }
 
-   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
-   {
-      _stopped = true;
-   } );
-
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this ) );
 }
 
 error_code request_handler::on_connect( message_broker& m )
@@ -231,7 +231,7 @@ void request_handler::add_msg_handler(
    handler_verify_func verify,
    msg_handler_func handler )
 {
-   KOINOS_ASSERT( !_consumer_broker->connected(), broker_already_running, "message handlers should be added prior to amqp connection" );
+   KOINOS_ASSERT( !connected(), request_handler_already_connected, "message handlers should be added to the request handler prior to amqp connection" );
 
    _message_handlers.push_back(
       {
@@ -254,9 +254,9 @@ void request_handler::add_msg_handler(
    add_msg_handler( exchange, routing_key, exclusive, verify, msg_handler_func( handler ) );
 }
 
-void request_handler::publish( const boost::system::error_code& ec )
+void request_handler::publish()
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   if ( _stopped )
       return;
 
    std::shared_ptr< message > m;
@@ -267,45 +267,47 @@ void request_handler::publish( const boost::system::error_code& ec )
 
    if ( r != error_code::success )
    {
-      LOG(error) << "An error has occurred while publishing message";
+      LOG(error) << "An error has occurred while publishing message on the request handler";
    }
 }
 
-void request_handler::consume( const boost::system::error_code& ec )
+void request_handler::consume()
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   if ( _stopped )
       return;
 
    auto result = _consumer_broker->consume();
 
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
+   boost::asio::post( _io_context, std::bind( &request_handler::consume, this ) );
 
    if ( result.first == error_code::time_out ) {}
    else if ( result.first != error_code::success )
    {
-      LOG(warning) << "Failed to consume message";
+      LOG(warning) << "Request handler failed to consume message";
    }
    else
    {
-      LOG(debug) << "Received message";
-
-      LOG(debug) << " -> exchange:       " << result.second->exchange;
-      LOG(debug) << " -> routing_key:    " << result.second->routing_key;
-      LOG(debug) << " -> content_type:   " << result.second->content_type;
-
-      if ( result.second->correlation_id )
-         LOG(debug) << " -> correlation_id: " << *result.second->correlation_id;
-
-      if ( result.second->reply_to )
-         LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
-
-      LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
-      LOG(debug) << " -> data:           " << util::to_hex( result.second->data );
+      LOG(debug) << "Request handler received message: " << to_string( *result.second );
 
       _input_queue.push_back( result.second );
 
-      boost::asio::dispatch( _io_context, std::bind( &request_handler::handle_message, this, boost::system::error_code{} ) );
+      boost::asio::dispatch( _io_context, std::bind( &request_handler::handle_message, this ) );
    }
+}
+
+bool request_handler::running() const
+{
+   return !_io_context.stopped();
+}
+
+bool request_handler::connected() const
+{
+   return _publisher_broker->connected() && _consumer_broker->connected();
+}
+
+bool request_handler::ready() const
+{
+   return connected() && running();
 }
 
 } // koinos::mq

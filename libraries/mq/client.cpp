@@ -5,6 +5,7 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/random.hpp>
 
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/bind.hpp>
@@ -22,11 +23,6 @@ using namespace std::chrono_literals;
 namespace koinos::mq {
 
 namespace detail {
-
-std::string to_string( std::chrono::time_point< std::chrono::system_clock > t )
-{
-   return std::to_string( std::chrono::duration_cast< std::chrono::milliseconds >( t.time_since_epoch() ).count() );
-}
 
 struct request
 {
@@ -65,6 +61,7 @@ public:
 
    bool running() const;
    bool connected() const;
+   bool ready() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,
@@ -178,7 +175,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    );
 
    if ( code != error_code::success )
-      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url) );
+      KOINOS_THROW( mq_connection_failure, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
    boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
 }
@@ -211,6 +208,11 @@ bool client_impl::running() const
 bool client_impl::connected() const
 {
    return _writer_broker->connected() && _reader_broker->connected();
+}
+
+bool client_impl::ready() const
+{
+   return connected() && running();
 }
 
 error_code client_impl::on_connect( message_broker& m )
@@ -342,7 +344,8 @@ void client_impl::consume()
       }
    }
 
-   boost::asio::post( _io_context, std::bind( &client_impl::policy_handler, this ) );
+   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
+   boost::asio::dispatch( _io_context, std::bind( &client_impl::policy_handler, this ) );
 }
 
 error_code client_impl::publish( const message& m, retry_policy policy, std::optional< std::string > action_log )
@@ -374,15 +377,13 @@ void client_impl::policy_handler()
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
-      LOG(debug) << "Client handling policy for request at current time: " << to_string( std::chrono::system_clock::now() ) << ", " << to_string( *it->msg );
-
       if ( it->expiration > std::chrono::system_clock::now() )
          break;
 
       switch ( it->policy )
       {
       case retry_policy::none:
-         it->response->set_exception( std::make_exception_ptr( timeout_error( "request timeout: " + *it->correlation_id() ) ) );
+         it->response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *it->correlation_id() ) ) );
          idx.erase( it );
          return;
       case retry_policy::exponential_backoff:
@@ -419,20 +420,18 @@ void client_impl::policy_handler()
 
             if ( err != error_code::success )
             {
-               promise->set_exception( std::make_exception_ptr( broker_publish_error( "error resending rpc message" ) ) );
+               promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
                _requests.erase( iter );
             }
          }
          else
          {
-            promise->set_exception( std::make_exception_ptr( request_insertion_error( "failed to insert request, possible a correlation id collision" ) ) );
+            promise->set_exception( std::make_exception_ptr( client_request_insertion_error( "failed to insert request, possible a correlation id collision" ) ) );
          }
 
          break;
       }
    }
-
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
 }
 
 std::shared_future< std::string > client_impl::rpc(
@@ -458,7 +457,7 @@ std::shared_future< std::string > client_impl::rpc(
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
    else
-      KOINOS_ASSERT( policy != retry_policy::exponential_backoff, invalid_client_request, "cannot have an ${p} policy without a timeout", ("p", to_string( policy )) );
+      KOINOS_ASSERT( policy != retry_policy::exponential_backoff, client_request_invalid, "cannot have an ${p} policy without a timeout", ("p", to_string( policy )) );
 
    LOG(debug) << "Sending RPC from client: " << to_string( *msg );
 
@@ -479,13 +478,8 @@ std::shared_future< std::string > client_impl::rpc(
       std::lock_guard< std::mutex > guard( _requests_mutex );
       bool success = false;
       std::tie( iter, success ) = _requests.insert( std::move( r ) );
-      KOINOS_ASSERT( success, request_insertion_error, "failed to insert request, possibly a correlation id collision" );
+      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
    }
-
-   if ( iter->correlation_id() )
-      LOG(debug) << "Publishing RPC from client with correlation ID: " << *iter->correlation_id() << ", and expiration: " << to_string( iter->expiration );
-   else
-      LOG(debug) << "Publishing RPC from client without a correlation ID, and expiration: " << to_string( iter->expiration );
 
    auto err = publish( *msg, policy, "client rpc publication" );
 
@@ -494,7 +488,7 @@ std::shared_future< std::string > client_impl::rpc(
       std::lock_guard< std::mutex > guard( _requests_mutex );
       _requests.erase( iter );
 
-      promise->set_exception( std::make_exception_ptr( broker_publish_error( "error sending rpc message" ) ) );
+      promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
    }
 
    return fut;
@@ -516,7 +510,7 @@ void client_impl::broadcast( const std::string& routing_key, const std::string& 
       "client broadcast publication"
    );
 
-   KOINOS_ASSERT( err == error_code::success, broker_publish_error, "error broadcasting message" );
+   KOINOS_ASSERT( err == error_code::success, client_publish_error, "error broadcasting message" );
 }
 
 } // detail
@@ -552,6 +546,11 @@ bool client::running() const
 bool client::connected() const
 {
    return _my->connected();
+}
+
+bool client::ready() const
+{
+   return _my->ready();
 }
 
 void client::disconnect()

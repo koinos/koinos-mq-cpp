@@ -51,6 +51,10 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       void disconnect();
       void connect( const std::string& amqp_url, retry_policy = retry_policy::exponential_backoff );
 
+      bool running() const;
+      bool connected() const;
+      bool ready() const;
+
       void add_broadcast_handler(
          const std::string& routing_key,
          msg_handler_void_func func,
@@ -64,9 +68,9 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       );
 
    private:
-      void consume( const boost::system::error_code& ec );
-      void publish( const boost::system::error_code& ec );
-      void handle_message( const boost::system::error_code& ec );
+      void consume();
+      void publish();
+      void handle_message();
 
       error_code on_connect( message_broker& m );
 

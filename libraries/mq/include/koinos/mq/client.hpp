@@ -29,6 +29,7 @@ public:
 
    bool running() const;
    bool connected() const;
+   bool ready() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,
