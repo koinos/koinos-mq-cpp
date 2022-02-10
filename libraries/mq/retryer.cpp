@@ -22,17 +22,21 @@ void retryer::retry_logic(
    std::chrono::milliseconds t,
    std::optional< std::string > m )
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   if ( _stopped )
+   {
       p->set_value( error_code::failure );
+      return;
+   }
 
    error_code e = f();
 
    if ( e == error_code::failure )
    {
+      t = std::min( t * 2, _max_timeout );
+
       if ( m )
          LOG(warning) << "Unable to " << *m << ", retrying in " << t.count() << "ms";
 
-      t = std::min( t * 2, _max_timeout );
       _timer.async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, p, f, t, m ) );
       _timer.expires_from_now( t );
    }
