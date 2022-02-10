@@ -335,7 +335,6 @@ void client_impl::consume()
       }
    }
 
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
    boost::asio::post( _io_context, std::bind( &client_impl::policy_handler, this ) );
 }
 
@@ -429,6 +428,8 @@ void client_impl::policy_handler()
          break;
       }
    }
+
+   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
 }
 
 std::shared_future< std::string > client_impl::rpc(
