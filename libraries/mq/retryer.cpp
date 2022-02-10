@@ -13,23 +13,9 @@ retryer::retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::
    _ioc( ioc ),
    _stopped( stopped ),
    _timer( ioc ),
-   _max_timeout( max_timeout ),
-   _signals( ioc )
-{
-   _signals.add( SIGINT );
-   _signals.add( SIGTERM );
-#if defined(SIGQUIT)
-   _signals.add( SIGQUIT );
-#endif // defined(SIGQUIT)
-   static_assert( std::atomic_bool::is_always_lock_free );
+   _max_timeout( max_timeout ) {}
 
-   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
-   {
-      _timer.cancel();
-   } );
-}
-
-retryer::~retryer()
+void retryer::cancel()
 {
    _timer.cancel();
 }

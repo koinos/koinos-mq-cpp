@@ -172,6 +172,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
 void client_impl::abort()
 {
+   _retryer.cancel();
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
