@@ -5,19 +5,16 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/random.hpp>
 
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/bind.hpp>
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/member.hpp>
 #include <boost/multi_index/ordered_index.hpp>
 
 #include <atomic>
 #include <chrono>
-#include <map>
 #include <mutex>
-#include <random>
-#include <thread>
 
 using namespace std::chrono_literals;
 
@@ -72,8 +69,8 @@ public:
 
 private:
    error_code on_connect( message_broker& m );
-   void consume( const boost::system::error_code& ec );
-   void policy_handler( const boost::system::error_code& ec );
+   void consume();
+   void policy_handler();
    void abort();
 
    void set_queue_name( const std::string& s );
@@ -167,7 +164,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    if ( code != error_code::success )
       KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
+   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
 }
 
 void client_impl::abort()
@@ -255,9 +252,11 @@ error_code client_impl::on_connect( message_broker& m )
    return ec;
 }
 
-void client_impl::consume( const boost::system::error_code& ec )
+void client_impl::consume()
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   LOG(debug) << "Consuming message";
+
+   if ( _stopped )
       return abort();
 
    error_code code;
@@ -318,13 +317,15 @@ void client_impl::consume( const boost::system::error_code& ec )
       }
    }
 
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this, boost::system::error_code{} ) );
-   boost::asio::dispatch( _io_context, std::bind( &client_impl::policy_handler, this, boost::system::error_code{} ) );
+   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
+   boost::asio::post( _io_context, std::bind( &client_impl::policy_handler, this ) );
 }
 
-void client_impl::policy_handler( const boost::system::error_code& ec )
+void client_impl::policy_handler()
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   LOG(debug) << "Handling retry policies";
+
+   if ( _stopped )
       return abort();
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
