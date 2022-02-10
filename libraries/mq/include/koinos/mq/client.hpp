@@ -27,7 +27,8 @@ public:
 
    void disconnect();
 
-   bool is_running() const;
+   bool running() const;
+   bool connected() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,
@@ -39,7 +40,8 @@ public:
    void broadcast(
       const std::string& routing_key,
       const std::string& payload,
-      const std::string& content_type = "application/octet-stream" );
+      const std::string& content_type = "application/octet-stream",
+      retry_policy policy = retry_policy::exponential_backoff );
 private:
    std::unique_ptr< detail::client_impl > _my;
 };
