@@ -297,7 +297,7 @@ void client_impl::consume()
 
          _reader_broker->disconnect();
 
-         e = _reader_broker->connect(
+         _reader_broker->connect(
             _amqp_url,
             [this]( message_broker& m ) -> error_code
             {
@@ -360,7 +360,7 @@ error_code client_impl::publish( const message& m, retry_policy policy, std::opt
             return e;
 
          _writer_broker->disconnect();
-         e = _writer_broker->connect( _amqp_url );
+         _writer_broker->connect( _amqp_url );
          return e;
       },
       action_log

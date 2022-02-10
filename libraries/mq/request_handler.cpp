@@ -292,7 +292,7 @@ void request_handler::publish()
             return e;
 
          _publisher_broker->disconnect();
-         e = _publisher_broker->connect( _amqp_url );
+         _publisher_broker->connect( _amqp_url );
          return e;
       },
       "request handler publication"
@@ -326,7 +326,7 @@ void request_handler::consume()
 
          _consumer_broker->disconnect();
 
-         e = _consumer_broker->connect(
+         _consumer_broker->connect(
             _amqp_url,
             [this]( message_broker& m ) -> error_code
             {
@@ -345,6 +345,10 @@ void request_handler::consume()
    else if ( code != error_code::success )
    {
       LOG(warning) << "Request handler failed to consume message";
+   }
+   else if ( !msg )
+   {
+      LOG(debug) << "Request handler message consumption succeeded but resulted in an empty message";
    }
    else
    {
