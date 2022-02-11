@@ -82,6 +82,7 @@ private:
    void policy_handler();
    void abort();
    error_code publish( const message& m, retry_policy policy, std::optional< std::string > action_log );
+   std::vector< request_set::node_type > extract_expired_message();
 
    void set_queue_name( const std::string& s );
    std::string get_queue_name();
@@ -381,10 +382,9 @@ error_code client_impl::publish( const message& m, retry_policy policy, std::opt
    );
 }
 
-void client_impl::policy_handler()
+std::vector< request_set::node_type > client_impl::extract_expired_message()
 {
-   if ( _stopped )
-      return;
+   std::vector< request_set::node_type > expired_messages;
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );
@@ -394,48 +394,59 @@ void client_impl::policy_handler()
       if ( it->expiration > std::chrono::system_clock::now() )
          break;
 
-      switch ( it->policy )
+      expired_messages.push_back( idx.extract( it ) );
+   }
+
+   return expired_messages;
+}
+
+void client_impl::policy_handler()
+{
+   if ( _stopped )
+      return;
+
+   auto expired_messages = extract_expired_message();
+
+   for ( auto& req_node : expired_messages )
+   {
+      switch ( req_node.value().policy )
       {
       case retry_policy::none:
-         it->response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *it->correlation_id() ) ) );
-         idx.erase( it );
+         req_node.value().response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *req_node.value().correlation_id() ) ) );
          return;
       case retry_policy::exponential_backoff:
-         LOG(warning) << "No response to client request with correlation ID: " << it->msg->correlation_id.value() << ", within " << it->msg->expiration.value() << "ms";
-         LOG(debug) << "Client applying exponential backoff for message: " << to_string( *it->msg );
+         LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
+         LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
 
          // Adjust our message for another attempt
-         auto old_correlation_id = it->msg->correlation_id.value();
+         auto old_correlation_id = req_node.value().msg->correlation_id.value();
 
-         it->msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
-         it->msg->expiration     = std::min( it->msg->expiration.value() * 2, _max_expiration );
-         it->msg->reply_to       = get_queue_name();
+         req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
+         req_node.value().msg->expiration     = std::min( req_node.value().msg->expiration.value() * 2, _max_expiration );
+         req_node.value().msg->reply_to       = get_queue_name();
 
          LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
-            << it->msg->correlation_id.value() << ", expiration: " << it->msg->expiration.value();
+            << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
 
-         request r;
-         r.expiration     = std::chrono::system_clock::now() + std::chrono::milliseconds( *it->msg->expiration );
-         r.policy         = it->policy;
-         r.response       = it->response;
-         r.msg            = it->msg;
+         req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
 
-         auto promise = r.response;
+         auto promise = req_node.value().response;
 
-         idx.erase( it );
+         const auto [ it, inserted ] = [&]() {
+            std::lock_guard< std::mutex > guard( _requests_mutex );
+            const auto res = _requests.insert( std::move( req_node ) );
+            return std::make_pair( res.position, res.inserted );
+         }();
 
-         request_set::iterator iter;
-         bool success = false;
-         std::tie( iter, success ) = _requests.insert( std::move( r ) );
-
-         if ( success )
+         if ( inserted )
          {
-            auto err = publish( *iter->msg, iter->policy, "client rpc republication" );
+            auto err = publish( *it->msg, it->policy, "client rpc republication" );
 
             if ( err != error_code::success )
             {
                promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
-               _requests.erase( iter );
+               std::lock_guard< std::mutex > guard( _requests_mutex );
+               _requests.erase( it );
             }
          }
          else
