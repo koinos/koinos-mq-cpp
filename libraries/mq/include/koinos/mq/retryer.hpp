@@ -11,10 +11,10 @@
 #include <chrono>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -35,7 +35,8 @@ public:
 
    void cancel();
 
-   using timer_ptr = std::shared_ptr< boost::asio::high_resolution_timer >;
+   using promise_ptr = std::shared_ptr< std::promise< error_code > >;
+   using timer_ptr   = std::shared_ptr< boost::asio::high_resolution_timer >;
 private:
    void retry_logic(
       const boost::system::error_code& ec,
@@ -46,14 +47,14 @@ private:
       std::optional< std::string > m
    );
 
-   void add_timer( timer_ptr t );
-   void remove_timer( timer_ptr t );
+   void add( promise_ptr p, timer_ptr t );
+   void remove( promise_ptr p, error_code e );
 
    boost::asio::io_context&           _ioc;
    std::atomic_bool&                  _stopped;
    std::chrono::milliseconds          _max_timeout;
-   std::mutex                         _timer_set_mutex;
-   std::set< timer_ptr >              _timer_set;
+   std::mutex                         _promise_map_mutex;
+   std::map< promise_ptr, timer_ptr > _promise_map;
 };
 
 } // koinos::mq
