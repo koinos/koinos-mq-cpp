@@ -6,6 +6,7 @@
 
 #include <boost/asio/high_resolution_timer.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/signal_set.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -24,7 +25,7 @@ namespace koinos::mq {
 class retryer final
 {
 public:
-   retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::chrono::milliseconds max_timeout );
+   retryer( boost::asio::io_context& ioc, std::chrono::milliseconds max_timeout );
 
    error_code with_policy(
       retry_policy policy,
@@ -50,10 +51,10 @@ private:
    void remove_timer( timer_ptr t );
 
    boost::asio::io_context&           _ioc;
-   std::atomic_bool&                  _stopped;
    std::chrono::milliseconds          _max_timeout;
-   std::mutex                         _timer_set_mutex;
-   std::set< timer_ptr >              _timer_set;
+   std::mutex                         _timers_mutex;
+   std::set< timer_ptr >              _timers;
+   boost::asio::signal_set            _signals;
 };
 
 } // koinos::mq

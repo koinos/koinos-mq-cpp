@@ -9,33 +9,43 @@ using namespace std::placeholders;
 
 namespace koinos::mq {
 
-retryer::retryer( boost::asio::io_context& ioc, std::atomic_bool& stopped, std::chrono::milliseconds max_timeout ) :
+retryer::retryer( boost::asio::io_context& ioc, std::chrono::milliseconds max_timeout ) :
    _ioc( ioc ),
-   _stopped( stopped ),
-   _max_timeout( max_timeout ) {}
+   _max_timeout( max_timeout ),
+   _signals( ioc )
+{
+   _signals.add( SIGINT );
+   _signals.add( SIGTERM );
+#if defined(SIGQUIT)
+   _signals.add( SIGQUIT );
+#endif // defined(SIGQUIT)
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      cancel();
+   } );
+}
 
 void retryer::cancel()
 {
-   std::lock_guard guard( _timer_set_mutex );
-   auto it = _timer_set.begin();
-   while ( !_timer_set.empty() )
-   {
-      it->get()->cancel();
-      _timer_set.erase( it );
-      it = _timer_set.begin();
-   }
+   _signals.clear();
+   std::lock_guard guard( _timers_mutex );
+   for ( const auto& timer : _timers )
+      timer->cancel();
 }
 
 void retryer::add_timer( timer_ptr t )
 {
-   std::lock_guard guard( _timer_set_mutex );
-   _timer_set.insert( t );
+   std::lock_guard guard( _timers_mutex );
+   _timers.insert( t );
 }
 
 void retryer::remove_timer( timer_ptr t )
 {
-   std::lock_guard guard( _timer_set_mutex );
-   _timer_set.erase( t );
+   std::lock_guard guard( _timers_mutex );
+   auto it = _timers.find( t );
+   if ( it != _timers.end() )
+      _timers.erase( it );
 }
 
 void retryer::retry_logic(
@@ -46,7 +56,7 @@ void retryer::retry_logic(
    std::chrono::milliseconds t,
    std::optional< std::string > m )
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
+   if ( ec == boost::asio::error::operation_aborted )
    {
       p->set_value( error_code::failure );
       remove_timer( timer );
@@ -85,7 +95,6 @@ error_code retryer::with_policy(
    std::future fut = promise->get_future();
 
    std::shared_ptr< boost::asio::high_resolution_timer > timer = std::make_shared< boost::asio::high_resolution_timer >( _ioc );
-   add_timer( timer );
 
    switch ( policy )
    {
@@ -98,6 +107,7 @@ error_code retryer::with_policy(
 
          timer->expires_after( timeout );
          timer->async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, timer, promise, fn, timeout, message ) );
+         add_timer( timer );
          break;
    }
 

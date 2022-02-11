@@ -72,7 +72,6 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       void consume();
       void publish();
       void handle_message();
-      void abort();
 
       error_code on_connect( message_broker& m );
 

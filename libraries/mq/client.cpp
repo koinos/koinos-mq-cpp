@@ -108,7 +108,7 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
    _signals( io_context ),
-   _retryer( io_context, _stopped, std::chrono::milliseconds( _max_expiration ) )
+   _retryer( io_context, std::chrono::milliseconds( _max_expiration ) )
 {
    _signals.add( SIGINT );
    _signals.add( SIGTERM );
@@ -120,11 +120,14 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
    {
       _stopped = true;
+      abort();
    } );
 }
 
 client_impl::~client_impl()
 {
+   _retryer.cancel();
+   abort();
    disconnect();
 }
 
@@ -182,7 +185,6 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
 void client_impl::abort()
 {
-   _retryer.cancel();
    std::lock_guard< std::mutex > lock( _requests_mutex );
    for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
@@ -278,7 +280,7 @@ error_code client_impl::on_connect( message_broker& m )
 void client_impl::consume()
 {
    if ( _stopped )
-      return abort();
+      return;
 
    error_code code;
    std::shared_ptr< message > msg;
@@ -382,7 +384,7 @@ error_code client_impl::publish( const message& m, retry_policy policy, std::opt
 void client_impl::policy_handler()
 {
    if ( _stopped )
-      return abort();
+      return;
 
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );

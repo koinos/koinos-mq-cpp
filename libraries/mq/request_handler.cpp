@@ -14,7 +14,7 @@ namespace koinos::mq {
 void request_handler::handle_message()
 {
    if ( _stopped )
-      return abort();
+      return;
 
    std::shared_ptr< message > msg;
 
@@ -69,7 +69,7 @@ request_handler::request_handler( boost::asio::io_context& io_context ) :
    _consumer_broker( std::make_unique< message_broker >() ),
    _io_context( io_context ),
    _signals( io_context ),
-   _retryer( io_context, _stopped, std::chrono::milliseconds( 30000 ) )
+   _retryer( io_context, std::chrono::milliseconds( 30000 ) )
 {
    _signals.add( SIGINT );
    _signals.add( SIGTERM );
@@ -86,6 +86,7 @@ request_handler::request_handler( boost::asio::io_context& io_context ) :
 
 request_handler::~request_handler()
 {
+   _retryer.cancel();
    disconnect();
 }
 
@@ -96,11 +97,6 @@ void request_handler::disconnect()
 
    if ( _publisher_broker->connected() )
       _publisher_broker->disconnect();
-}
-
-void request_handler::abort()
-{
-   _retryer.cancel();
 }
 
 void request_handler::connect( const std::string& amqp_url, retry_policy policy )
@@ -276,7 +272,7 @@ void request_handler::add_msg_handler(
 void request_handler::publish()
 {
    if ( _stopped )
-      return abort();
+      return;
 
    std::shared_ptr< message > m;
 
@@ -311,7 +307,7 @@ void request_handler::publish()
 void request_handler::consume()
 {
    if ( _stopped )
-      return abort();
+      return;
 
    error_code code;
    std::shared_ptr< message > msg;
