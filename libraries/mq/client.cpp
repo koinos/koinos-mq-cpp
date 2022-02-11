@@ -297,13 +297,21 @@ void client_impl::consume()
 
          _reader_broker->disconnect();
 
-         _reader_broker->connect(
+         e = _reader_broker->connect(
             _amqp_url,
             [this]( message_broker& m ) -> error_code
             {
                return this->on_connect( m );
             }
          );
+
+         if ( e == error_code::success )
+         {
+            std::tie( e, m ) = _reader_broker->consume();
+
+            if ( e != error_code::failure )
+               msg = m;
+         }
 
          return e;
       },
@@ -360,7 +368,11 @@ error_code client_impl::publish( const message& m, retry_policy policy, std::opt
             return e;
 
          _writer_broker->disconnect();
-         _writer_broker->connect( _amqp_url );
+         e = _writer_broker->connect( _amqp_url );
+
+         if ( e == error_code::success )
+            e = _writer_broker->publish( m );
+
          return e;
       },
       action_log

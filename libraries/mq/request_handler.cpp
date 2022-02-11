@@ -292,7 +292,11 @@ void request_handler::publish()
             return e;
 
          _publisher_broker->disconnect();
-         _publisher_broker->connect( _amqp_url );
+         e = _publisher_broker->connect( _amqp_url );
+
+         if ( e == error_code::success )
+            e = _publisher_broker->publish( *m );
+
          return e;
       },
       "request handler publication"
@@ -326,13 +330,21 @@ void request_handler::consume()
 
          _consumer_broker->disconnect();
 
-         _consumer_broker->connect(
+         e = _consumer_broker->connect(
             _amqp_url,
             [this]( message_broker& m ) -> error_code
             {
                return this->on_connect( m );
             }
          );
+
+         if ( e == error_code::success )
+         {
+            std::tie( e, m ) = _consumer_broker->consume();
+
+            if ( e != error_code::failure )
+               msg = m;
+         }
 
          return e;
       },
