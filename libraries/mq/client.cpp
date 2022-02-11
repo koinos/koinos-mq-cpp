@@ -497,23 +497,17 @@ std::shared_future< std::string > client_impl::rpc(
    r.response       = promise;
    r.msg            = msg;
 
-   request_set::iterator iter;
-
-   {
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-      bool success = false;
-      std::tie( iter, success ) = _requests.insert( std::move( r ) );
-      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
-   }
-
    auto err = publish( *msg, policy, "client rpc publication" );
 
    if ( err != error_code::success )
    {
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-      _requests.erase( iter );
-
       promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
+   }
+   else
+   {
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      const auto& [ iter, success ] = _requests.insert( std::move( r ) );
+      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
    }
 
    return fut;
