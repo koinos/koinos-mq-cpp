@@ -488,15 +488,6 @@ std::shared_future< std::string > client_impl::rpc(
 
    std::shared_future< std::string > fut = promise->get_future();
 
-   request r;
-   if ( msg->expiration )
-      r.expiration  = std::chrono::system_clock::now() + timeout;
-   else
-      r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
-   r.policy         = policy;
-   r.response       = promise;
-   r.msg            = msg;
-
    auto err = publish( *msg, policy, "client rpc publication" );
 
    if ( err != error_code::success )
@@ -505,6 +496,15 @@ std::shared_future< std::string > client_impl::rpc(
    }
    else
    {
+      request r;
+      if ( msg->expiration )
+         r.expiration  = std::chrono::system_clock::now() + timeout;
+      else
+         r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
+      r.policy         = policy;
+      r.response       = promise;
+      r.msg            = msg;
+
       std::lock_guard< std::mutex > guard( _requests_mutex );
       const auto& [ iter, success ] = _requests.insert( std::move( r ) );
       KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
