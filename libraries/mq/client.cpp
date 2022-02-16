@@ -97,15 +97,15 @@ private:
    std::shared_ptr< message_broker >                    _reader_broker;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
-   boost::asio::io_context&                             _io_context;
+   boost::asio::io_context&                             _ioc;
    boost::asio::signal_set                              _signals;
-   std::atomic_bool                                     _stopped = false;
+   std::atomic< bool >                                  _stopped = false;
    retryer                                              _retryer;
    std::string                                          _amqp_url;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
-   _io_context( io_context ),
+   _ioc( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
    _signals( io_context ),
@@ -116,7 +116,6 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
 #if defined(SIGQUIT)
    _signals.add( SIGQUIT );
 #endif // defined(SIGQUIT)
-   static_assert( std::atomic_bool::is_always_lock_free );
 
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
    {
@@ -181,7 +180,7 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
    if ( code != error_code::success )
       KOINOS_THROW( mq_connection_failure, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
+   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
 }
 
 void client_impl::abort()
@@ -205,7 +204,7 @@ void client_impl::disconnect()
 
 bool client_impl::running() const
 {
-   return !_io_context.stopped();
+   return !_ioc.stopped();
 }
 
 bool client_impl::connected() const
@@ -355,8 +354,8 @@ void client_impl::consume()
       }
    }
 
-   boost::asio::post( _io_context, std::bind( &client_impl::consume, this ) );
-   boost::asio::dispatch( _io_context, std::bind( &client_impl::policy_handler, this ) );
+   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+   boost::asio::dispatch( _ioc, std::bind( &client_impl::policy_handler, this ) );
 }
 
 error_code client_impl::publish( const message& m, retry_policy policy, std::optional< std::string > action_log )

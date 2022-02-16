@@ -22,7 +22,7 @@ namespace detail {
 class message_broker_impl final
 {
 private:
-   std::atomic_bool                _running = false;
+   std::atomic< bool >             _running = false;
    amqp_connection_state_t         _connection = nullptr;
    const amqp_channel_t            _channel = 1;
    std::mutex                      _amqp_mutex;

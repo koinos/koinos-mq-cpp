@@ -50,7 +50,7 @@ void request_handler::handle_message()
 
                      _output_queue.push_back( reply );
 
-                     boost::asio::post( _io_context, std::bind( &request_handler::publish, this ) );
+                     boost::asio::post( _ioc, std::bind( &request_handler::publish, this ) );
                   }
                },
                [&]( const msg_handler_void_func& f )
@@ -67,7 +67,7 @@ void request_handler::handle_message()
 request_handler::request_handler( boost::asio::io_context& io_context ) :
    _publisher_broker( std::make_unique< message_broker >() ),
    _consumer_broker( std::make_unique< message_broker >() ),
-   _io_context( io_context ),
+   _ioc( io_context ),
    _signals( io_context ),
    _retryer( io_context, std::chrono::milliseconds( 30000 ) )
 {
@@ -76,7 +76,6 @@ request_handler::request_handler( boost::asio::io_context& io_context ) :
 #if defined(SIGQUIT)
    _signals.add( SIGQUIT );
 #endif // defined(SIGQUIT)
-   static_assert( std::atomic_bool::is_always_lock_free );
 
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
    {
@@ -139,7 +138,7 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
       KOINOS_THROW( mq_connection_failure, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
    }
 
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this ) );
+   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
 }
 
 error_code request_handler::on_connect( message_broker& m )
@@ -347,7 +346,7 @@ void request_handler::consume()
       "request handler message consumption"
    );
 
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this ) );
+   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
 
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
@@ -364,13 +363,13 @@ void request_handler::consume()
 
       _input_queue.push_back( msg );
 
-      boost::asio::dispatch( _io_context, std::bind( &request_handler::handle_message, this ) );
+      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this ) );
    }
 }
 
 bool request_handler::running() const
 {
-   return !_io_context.stopped();
+   return !_ioc.stopped();
 }
 
 bool request_handler::connected() const

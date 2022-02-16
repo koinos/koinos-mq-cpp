@@ -104,10 +104,10 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       synced_msg_queue                  _output_queue{ constants::max_queue_size };
 
       std::vector< message_handler >    _message_handlers;
-      boost::asio::io_context&          _io_context;
+      boost::asio::io_context&          _ioc;
 
       boost::asio::signal_set           _signals;
-      std::atomic_bool                  _stopped = false;
+      std::atomic< bool >               _stopped = false;
       retryer                           _retryer;
 };
 
