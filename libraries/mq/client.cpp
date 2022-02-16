@@ -338,7 +338,7 @@ void client_impl::consume()
       }
       else
       {
-         LOG(debug) << "Client received message" << to_string( *msg );
+         LOG(debug) << "Client received message: " << to_string( *msg );
 
          std::lock_guard< std::mutex > lock( _requests_mutex );
          const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
