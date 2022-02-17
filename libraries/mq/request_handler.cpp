@@ -3,6 +3,7 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/overloaded.hpp>
 
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 
 #include <chrono>
@@ -10,10 +11,10 @@
 
 namespace koinos::mq {
 
-void request_handler::handle_message( const boost::system::error_code& ec )
+void request_handler::handle_message()
 {
-   if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+   if ( _stopped )
+      return;
 
    std::shared_ptr< message > msg;
 
@@ -49,7 +50,7 @@ void request_handler::handle_message( const boost::system::error_code& ec )
 
                      _output_queue.push_back( reply );
 
-                     boost::asio::post( _io_context, std::bind( &request_handler::publish, this, boost::system::error_code{} ) );
+                     boost::asio::post( _ioc, std::bind( &request_handler::publish, this ) );
                   }
                },
                [&]( const msg_handler_void_func& f )
@@ -66,54 +67,78 @@ void request_handler::handle_message( const boost::system::error_code& ec )
 request_handler::request_handler( boost::asio::io_context& io_context ) :
    _publisher_broker( std::make_unique< message_broker >() ),
    _consumer_broker( std::make_unique< message_broker >() ),
-   _io_context( io_context )
+   _ioc( io_context ),
+   _signals( io_context ),
+   _retryer( io_context, std::chrono::milliseconds( 30000 ) )
 {
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
+   _signals.add( SIGINT );
+   _signals.add( SIGTERM );
+#if defined(SIGQUIT)
+   _signals.add( SIGQUIT );
+#endif // defined(SIGQUIT)
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+   } );
 }
 
 request_handler::~request_handler()
 {
+   _retryer.cancel();
    disconnect();
 }
 
 void request_handler::disconnect()
 {
-   if ( _consumer_broker->is_connected() )
+   if ( _consumer_broker->connected() )
       _consumer_broker->disconnect();
 
-   if ( _publisher_broker->is_connected() )
+   if ( _publisher_broker->connected() )
       _publisher_broker->disconnect();
 }
 
 void request_handler::connect( const std::string& amqp_url, retry_policy policy )
 {
-   if ( _publisher_broker->is_connected() || _consumer_broker->is_connected() )
-   {
-      KOINOS_THROW( broker_already_running, "ensure the request handler is not already connected" );
-   }
+   KOINOS_ASSERT( !connected(), request_handler_already_connected, "request handler is already connected" );
+   KOINOS_ASSERT( running(), request_handler_not_running, "request handler is not running" );
 
-   error_code ec;
+   _amqp_url = amqp_url;
 
-   ec = _publisher_broker->connect( amqp_url, policy );
-   if ( ec != error_code::success )
-   {
-      KOINOS_THROW( unable_to_connect, "could not connect publisher to amqp server ${a}", ("a", amqp_url) );
-   }
-
-   ec = _consumer_broker->connect(
-      amqp_url,
+   error_code code = _retryer.with_policy(
       policy,
-      [this]( message_broker& m )
+      [&]() -> error_code
       {
-         return this->on_connect( m );
-      }
+         error_code e;
+
+         e = _publisher_broker->connect( _amqp_url );
+
+         if ( e != error_code::success )
+            return e;
+
+         e = _consumer_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e != error_code::success )
+            _publisher_broker->disconnect();
+
+         return e;
+      },
+      "request handler connection to AMQP"
    );
 
-   if ( ec != error_code::success )
+   if ( code != error_code::success )
    {
       _publisher_broker->disconnect();
-      KOINOS_THROW( unable_to_connect, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
+      KOINOS_THROW( mq_connection_failure, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
    }
+
+   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
 }
 
 error_code request_handler::on_connect( message_broker& m )
@@ -220,10 +245,7 @@ void request_handler::add_msg_handler(
    handler_verify_func verify,
    msg_handler_func handler )
 {
-   if ( _consumer_broker->is_connected() )
-   {
-      KOINOS_THROW( broker_already_running, "message handlers should be added prior to amqp connection" );
-   }
+   KOINOS_ASSERT( !connected(), request_handler_already_connected, "message handlers should be added to the request handler prior to amqp connection" );
 
    _message_handlers.push_back(
       {
@@ -246,58 +268,118 @@ void request_handler::add_msg_handler(
    add_msg_handler( exchange, routing_key, exclusive, verify, msg_handler_func( handler ) );
 }
 
-void request_handler::publish( const boost::system::error_code& ec )
+void request_handler::publish()
 {
-   if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+   if ( _stopped )
+      return;
 
    std::shared_ptr< message > m;
 
    _output_queue.pull_front( m );
 
-   auto r = _publisher_broker->publish( *m );
+   auto r = _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         error_code e = _publisher_broker->publish( *m );
+
+         if ( e == error_code::success )
+            return e;
+
+         _publisher_broker->disconnect();
+         e = _publisher_broker->connect( _amqp_url );
+
+         if ( e == error_code::success )
+            e = _publisher_broker->publish( *m );
+
+         return e;
+      },
+      "request handler publication"
+   );
 
    if ( r != error_code::success )
    {
-      LOG(error) << "An error has occurred while publishing message";
+      LOG(error) << "An error has occurred while publishing message on the request handler";
    }
 }
 
-void request_handler::consume( const boost::system::error_code& ec )
+void request_handler::consume()
 {
-   if ( ec == boost::asio::error::operation_aborted )
-      return disconnect();
+   if ( _stopped )
+      return;
 
-   auto result = _consumer_broker->consume();
+   error_code code;
+   std::shared_ptr< message > msg;
 
-   if ( result.first == error_code::time_out ) {}
-   else if ( result.first != error_code::success )
+   code = _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         auto [ e, m ] = _consumer_broker->consume();
+
+         if ( e != error_code::failure )
+         {
+            msg = m;
+            return e;
+         }
+
+         _consumer_broker->disconnect();
+
+         e = _consumer_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e == error_code::success )
+         {
+            std::tie( e, m ) = _consumer_broker->consume();
+
+            if ( e != error_code::failure )
+               msg = m;
+         }
+
+         return e;
+      },
+      "request handler message consumption"
+   );
+
+   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
+
+   if ( code == error_code::time_out ) {}
+   else if ( code != error_code::success )
    {
-      LOG(warning) << "Failed to consume message";
+      LOG(warning) << "Request handler failed to consume message";
+   }
+   else if ( !msg )
+   {
+      LOG(debug) << "Request handler message consumption succeeded but resulted in an empty message";
    }
    else
    {
-      LOG(debug) << "Received message";
+      LOG(debug) << "Request handler received message: " << to_string( *msg );
 
-      LOG(debug) << " -> exchange:       " << result.second->exchange;
-      LOG(debug) << " -> routing_key:    " << result.second->routing_key;
-      LOG(debug) << " -> content_type:   " << result.second->content_type;
+      _input_queue.push_back( msg );
 
-      if ( result.second->correlation_id )
-         LOG(debug) << " -> correlation_id: " << *result.second->correlation_id;
-
-      if ( result.second->reply_to )
-         LOG(debug) << " -> reply_to:       " << *result.second->reply_to;
-
-      LOG(debug) << " -> delivery_tag:   " << result.second->delivery_tag;
-      LOG(debug) << " -> data:           " << util::to_hex( result.second->data );
-
-      _input_queue.push_back( result.second );
-
-      boost::asio::post( _io_context, std::bind( &request_handler::handle_message, this, boost::system::error_code{} ) );
+      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this ) );
    }
+}
 
-   boost::asio::post( _io_context, std::bind( &request_handler::consume, this, boost::system::error_code{} ) );
+bool request_handler::running() const
+{
+   return !_ioc.stopped();
+}
+
+bool request_handler::connected() const
+{
+   return _publisher_broker->connected() && _consumer_broker->connected();
+}
+
+bool request_handler::ready() const
+{
+   return connected() && running();
 }
 
 } // koinos::mq

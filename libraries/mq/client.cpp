@@ -1,15 +1,22 @@
 #include <koinos/mq/client.hpp>
+#include <koinos/mq/retryer.hpp>
 #include <koinos/mq/util.hpp>
 #include <koinos/log.hpp>
 #include <koinos/util/hex.hpp>
 #include <koinos/util/random.hpp>
 
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <boost/bind.hpp>
+#include <boost/multi_index_container.hpp>
+#include <boost/multi_index/mem_fun.hpp>
+#include <boost/multi_index/member.hpp>
+#include <boost/multi_index/ordered_index.hpp>
+
 #include <atomic>
 #include <chrono>
-#include <map>
 #include <mutex>
-#include <random>
-#include <thread>
 
 using namespace std::chrono_literals;
 
@@ -17,16 +24,44 @@ namespace koinos::mq {
 
 namespace detail {
 
+struct request
+{
+   std::chrono::time_point< std::chrono::system_clock >   expiration;
+   retry_policy                                           policy;
+   mutable std::shared_ptr< std::promise< std::string > > response;
+   mutable std::shared_ptr< message >                     msg;
+
+   std::optional< std::string >& correlation_id() const
+   {
+      return msg->correlation_id;
+   }
+};
+
+struct by_correlation_id{};
+struct by_expiration{};
+
+typedef boost::multi_index::multi_index_container<
+  request,
+  boost::multi_index::indexed_by<
+    boost::multi_index::ordered_unique<
+      boost::multi_index::tag< by_correlation_id >, boost::multi_index::const_mem_fun< request, std::optional< std::string >&, &request::correlation_id > >,
+    boost::multi_index::ordered_non_unique<
+      boost::multi_index::tag< by_expiration >, boost::multi_index::member< request, std::chrono::time_point< std::chrono::system_clock >, &request::expiration > >
+   >
+> request_set;
+
 class client_impl final
 {
 public:
-   client_impl();
+   client_impl( boost::asio::io_context& io_context );
    ~client_impl();
 
    void connect( const std::string& amqp_url, retry_policy policy );
    void disconnect();
 
-   bool is_running() const;
+   bool running() const;
+   bool connected() const;
+   bool ready() const;
 
    std::shared_future< std::string > rpc(
       const std::string& service,
@@ -38,42 +73,62 @@ public:
    void broadcast(
       const std::string& routing_key,
       const std::string& payload,
-      const std::string& content_type );
+      const std::string& content_type,
+      retry_policy policy );
 
 private:
    error_code on_connect( message_broker& m );
-   void consumer( std::shared_ptr< message_broker > broker );
-   void policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy retry );
+   void consume();
+   void policy_handler();
+   void abort();
+   error_code publish( const message& m, retry_policy policy, std::optional< std::string > action_log );
+   std::vector< request_set::node_type > extract_expired_message();
 
    void set_queue_name( const std::string& s );
    std::string get_queue_name();
 
-   std::map< std::string, std::promise< std::string > > _promise_map;
-   std::mutex                                           _promise_map_mutex;
+   request_set                                          _requests;
+   std::mutex                                           _requests_mutex;
 
    std::string                                          _queue_name;
    std::mutex                                           _queue_name_mutex;
 
    std::shared_ptr< message_broker >                    _writer_broker;
    std::shared_ptr< message_broker >                    _reader_broker;
-   std::unique_ptr< std::thread >                       _reader_thread;
-   std::atomic< bool >                                  _running = false;
    static constexpr uint64_t                            _max_expiration = 30000;
    static constexpr std::size_t                         _correlation_id_len = 32;
+   boost::asio::io_context&                             _ioc;
+   boost::asio::signal_set                              _signals;
+   std::atomic< bool >                                  _stopped = false;
+   retryer                                              _retryer;
+   std::string                                          _amqp_url;
 };
 
-client_impl::client_impl() :
+client_impl::client_impl( boost::asio::io_context& io_context ) :
+   _ioc( io_context ),
    _writer_broker( std::make_shared< message_broker >() ),
-   _reader_broker( std::make_shared< message_broker >() ) {}
+   _reader_broker( std::make_shared< message_broker >() ),
+   _signals( io_context ),
+   _retryer( io_context, std::chrono::milliseconds( _max_expiration ) )
+{
+   _signals.add( SIGINT );
+   _signals.add( SIGTERM );
+#if defined(SIGQUIT)
+   _signals.add( SIGQUIT );
+#endif // defined(SIGQUIT)
+
+   _signals.async_wait( [&]( const boost::system::error_code& err, int num )
+   {
+      _stopped = true;
+      abort();
+   } );
+}
 
 client_impl::~client_impl()
 {
-   try
-   {
-      if ( is_running() )
-         disconnect();
-   }
-   catch( ... ) {}
+   _retryer.cancel();
+   abort();
+   disconnect();
 }
 
 void client_impl::set_queue_name( const std::string& s )
@@ -90,65 +145,76 @@ std::string client_impl::get_queue_name()
 
 void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 {
-   KOINOS_ASSERT( !is_running(), broker_already_running, "client is already running" );
+   KOINOS_ASSERT( !connected(), client_already_connected, "client is already connected" );
+   KOINOS_ASSERT( running(), client_not_running, "client is not running" );
 
-   error_code ec;
+   _amqp_url = amqp_url;
 
-   ec = _writer_broker->connect( amqp_url, policy );
-
-   if ( ec != error_code::success )
-   {
-      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
-   }
-
-   ec = _reader_broker->connect(
-      amqp_url,
+   error_code code = _retryer.with_policy(
       policy,
-      [this]( message_broker& m ) -> error_code
+      [&]() -> error_code
       {
-         return this->on_connect( m );
-      }
+         error_code e;
+
+         e = _writer_broker->connect( _amqp_url );
+
+         if ( e != error_code::success )
+            return e;
+
+         e = _reader_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e != error_code::success )
+            _writer_broker->disconnect();
+
+         return e;
+      },
+      "client connection to AMQP"
    );
 
-   if ( ec != error_code::success )
+   if ( code != error_code::success )
+      KOINOS_THROW( mq_connection_failure, "could not connect to endpoint: ${e}", ("e", amqp_url) );
+
+   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+}
+
+void client_impl::abort()
+{
+   std::lock_guard< std::mutex > lock( _requests_mutex );
+   for ( auto it = _requests.begin(); it != _requests.end(); ++it )
    {
-      _writer_broker->disconnect();
-      KOINOS_THROW( unable_to_connect, "could not connect to endpoint: ${e}", ("e", amqp_url.c_str()) );
+      it->response->set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
+      _requests.erase( it );
    }
-
-   _running = true;
-
-   _reader_thread = std::make_unique< std::thread >( [&]()
-   {
-      consumer( _reader_broker );
-   } );
 }
 
 void client_impl::disconnect()
 {
-   KOINOS_ASSERT( is_running(), client_not_running, "client is already disconnected" );
+   if ( _writer_broker->connected() )
+      _writer_broker->disconnect();
 
-   _running = false;
-
-   _writer_broker->disconnect();
-   _reader_broker->disconnect();
-
-   if ( _reader_thread && _reader_thread->joinable() )
-      _reader_thread->join();
-
-   {
-      std::lock_guard< std::mutex > lock( _promise_map_mutex );
-      for ( auto it = _promise_map.begin(); it != _promise_map.end(); ++it )
-      {
-         it->second.set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
-         _promise_map.erase( it );
-      }
-   }
+   if ( _reader_broker->connected() )
+      _reader_broker->disconnect();
 }
 
-bool client_impl::is_running() const
+bool client_impl::running() const
 {
-   return _running;
+   return !_ioc.stopped();
+}
+
+bool client_impl::connected() const
+{
+   return _writer_broker->connected() && _reader_broker->connected();
+}
+
+bool client_impl::ready() const
+{
+   return connected() && running();
 }
 
 error_code client_impl::on_connect( message_broker& m )
@@ -166,7 +232,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while declaring broadcast exchange";
+      LOG(error) << "Error while declaring broadcast exchange for client";
       return ec;
    }
 
@@ -181,7 +247,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while declaring rpc exchange";
+      LOG(error) << "Error while declaring RPC exchange for client";
       return ec;
    }
 
@@ -195,7 +261,7 @@ error_code client_impl::on_connect( message_broker& m )
 
    if ( queue_res.first != error_code::success )
    {
-      LOG(error) << "Error while declaring temporary queue";
+      LOG(error) << "Error while declaring temporary queue for client";
       return queue_res.first;
    }
 
@@ -204,113 +270,190 @@ error_code client_impl::on_connect( message_broker& m )
    ec = m.bind_queue( queue_res.second, exchange::rpc, queue_res.second );
    if ( ec != error_code::success )
    {
-      LOG(error) << "Error while binding temporary queue";
+      LOG(error) << "Error while binding temporary queue for client";
       return ec;
    }
 
    return ec;
 }
 
-void client_impl::consumer( std::shared_ptr< message_broker > broker )
+void client_impl::consume()
 {
-   while ( _running )
+   if ( _stopped )
+      return;
+
+   error_code code;
+   std::shared_ptr< message > msg;
+
+   code = _retryer.with_policy(
+      retry_policy::exponential_backoff,
+      [&]() -> error_code
+      {
+         auto [ e, m ] = _reader_broker->consume();
+
+         if ( e != error_code::failure )
+         {
+            msg = m;
+            return e;
+         }
+
+         _reader_broker->disconnect();
+
+         e = _reader_broker->connect(
+            _amqp_url,
+            [this]( message_broker& m ) -> error_code
+            {
+               return this->on_connect( m );
+            }
+         );
+
+         if ( e == error_code::success )
+         {
+            std::tie( e, m ) = _reader_broker->consume();
+
+            if ( e != error_code::failure )
+               msg = m;
+         }
+
+         return e;
+      },
+      "client message consumption"
+   );
+
+   if ( code == error_code::time_out ) {}
+   else if ( code != error_code::success )
    {
-      auto result = _reader_broker->consume();
-
-      if ( result.first == error_code::time_out )
-      {
-         continue;
-      }
-
-      if ( result.first != error_code::success )
-      {
-         LOG(warning) << "Failed to consume message";
-         continue;
-      }
-
-      if ( !result.second )
-      {
-         LOG(warning) << "Consumption succeeded but resulted in an empty message";
-         continue;
-      }
-
-      auto& msg = result.second;
+      LOG(warning) << "Client failed to consume message";
+   }
+   else if ( !msg )
+   {
+      LOG(debug) << "Client message consumption succeeded but resulted in an empty message";
+   }
+   else
+   {
       if ( !msg->correlation_id.has_value() )
       {
-         LOG(warning) << "Received message without a correlation id";
-         continue;
-      }
-
-      {
-         std::lock_guard< std::mutex > lock( _promise_map_mutex );
-         auto it = _promise_map.find( *msg->correlation_id );
-         if ( it != _promise_map.end() )
-         {
-            it->second.set_value( std::move( msg->data ) );
-            _promise_map.erase( it );
-         }
-      }
-   }
-}
-
-void client_impl::policy_handler( std::shared_future< std::string > future, std::shared_ptr< message > msg, retry_policy policy  )
-{
-   while ( future.wait_for( std::chrono::milliseconds( msg->expiration.value() ) ) != std::future_status::ready )
-   {
-      std::lock_guard< std::mutex > guard( _promise_map_mutex );
-      auto node_handle = _promise_map.extract( msg->correlation_id.value() );
-      if ( !node_handle.empty() )
-      {
-         switch ( policy )
-         {
-         case retry_policy::none:
-            node_handle.mapped().set_exception( std::make_exception_ptr( timeout_error( "request timeout: " + msg->correlation_id.value() ) ) );
-            return;
-         case retry_policy::exponential_backoff:
-            LOG(warning) << "No response to message with correlation ID: "
-               << msg->correlation_id.value() << ", within " << msg->expiration.value() << "ms";
-
-            LOG(debug) << " -> correlation_id: " << msg->correlation_id.value();
-            LOG(debug) << " -> exchange:       " << msg->exchange;
-            LOG(debug) << " -> routing_key:    " << msg->routing_key;
-            LOG(debug) << " -> content_type:   " << msg->content_type;
-            LOG(debug) << " -> reply_to:       " << msg->reply_to.value();
-            LOG(debug) << " -> expiration:     " << msg->expiration.value();
-            LOG(debug) << " -> data:           " << util::to_hex( msg->data );
-
-            // Adjust our message for another attempt
-            auto old_correlation_id = msg->correlation_id.value();
-
-            msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
-            msg->expiration     = std::min( msg->expiration.value() * 2, _max_expiration );
-            msg->reply_to       = get_queue_name();
-
-            LOG(debug) << "Resending message (correlation ID: " << old_correlation_id << ") with new correlation ID: "
-               << msg->correlation_id.value() << ", expiration: " << msg->expiration.value();
-
-            // Publish another attempt
-            if ( _writer_broker->publish( *msg ) != error_code::success )
-            {
-               node_handle.mapped().set_exception( std::make_exception_ptr( broker_publish_error( "error sending RPC message" ) ) );
-               return;
-            }
-
-            // Update and reinsert our node handle
-            node_handle.key()              = msg->correlation_id.value();
-            const auto [ it, success, nh ] = _promise_map.insert( std::move( node_handle ) );
-
-            if ( !success )
-            {
-               nh.mapped().set_exception( std::make_exception_ptr( correlation_id_collision( "error recording correlation id" ) ) );
-               return;
-            }
-            break;
-         }
+         LOG(warning) << "Client received message without a correlation id";
       }
       else
       {
-         LOG(warning) << "Correlation ID " << msg->correlation_id.value() << " expected but not found in the promise map";
+         LOG(debug) << "Client received message: " << to_string( *msg );
+
+         std::lock_guard< std::mutex > lock( _requests_mutex );
+         const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+         auto it = idx.find( *msg->correlation_id );
+         if ( it != idx.end() )
+         {
+            it->response->set_value( std::move( msg->data ) );
+            _requests.erase( it );
+         }
+         else
+         {
+            LOG(warning) << "Client could not find correlation ID in request set: " << *msg->correlation_id;
+         }
+      }
+   }
+
+   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+   boost::asio::dispatch( _ioc, std::bind( &client_impl::policy_handler, this ) );
+}
+
+error_code client_impl::publish( const message& m, retry_policy policy, std::optional< std::string > action_log )
+{
+   return _retryer.with_policy(
+      policy,
+      [&]() -> error_code
+      {
+         error_code e = _writer_broker->publish( m );
+
+         if ( e == error_code::success )
+            return e;
+
+         _writer_broker->disconnect();
+         e = _writer_broker->connect( _amqp_url );
+
+         if ( e == error_code::success )
+            e = _writer_broker->publish( m );
+
+         return e;
+      },
+      action_log
+   );
+}
+
+std::vector< request_set::node_type > client_impl::extract_expired_message()
+{
+   std::vector< request_set::node_type > expired_messages;
+
+   std::lock_guard< std::mutex > guard( _requests_mutex );
+   auto& idx = boost::multi_index::get< by_expiration >( _requests );
+
+   for ( auto it = idx.begin(); it != idx.end(); ++it )
+   {
+      if ( it->expiration > std::chrono::system_clock::now() )
+         break;
+
+      expired_messages.push_back( idx.extract( it ) );
+   }
+
+   return expired_messages;
+}
+
+void client_impl::policy_handler()
+{
+   if ( _stopped )
+      return;
+
+   auto expired_messages = extract_expired_message();
+
+   for ( auto& req_node : expired_messages )
+   {
+      switch ( req_node.value().policy )
+      {
+      case retry_policy::none:
+         req_node.value().response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *req_node.value().correlation_id() ) ) );
          return;
+      case retry_policy::exponential_backoff:
+         LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
+         LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
+
+         // Adjust our message for another attempt
+         auto old_correlation_id = req_node.value().msg->correlation_id.value();
+
+         req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
+         req_node.value().msg->expiration     = std::min( req_node.value().msg->expiration.value() * 2, _max_expiration );
+         req_node.value().msg->reply_to       = get_queue_name();
+
+         LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
+            << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
+
+         req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
+
+         auto promise = req_node.value().response;
+
+         const auto [ it, inserted ] = [&]() {
+            std::lock_guard< std::mutex > guard( _requests_mutex );
+            const auto res = _requests.insert( std::move( req_node ) );
+            return std::make_pair( res.position, res.inserted );
+         }();
+
+         if ( inserted )
+         {
+            auto err = publish( *it->msg, it->policy, "client rpc republication" );
+
+            if ( err != error_code::success )
+            {
+               promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
+               std::lock_guard< std::mutex > guard( _requests_mutex );
+               _requests.erase( it );
+            }
+         }
+         else
+         {
+            promise->set_exception( std::make_exception_ptr( client_request_insertion_error( "failed to insert request, possible a correlation id collision" ) ) );
+         }
+
+         break;
       }
    }
 }
@@ -322,9 +465,10 @@ std::shared_future< std::string > client_impl::rpc(
    retry_policy policy,
    const std::string& content_type )
 {
-   KOINOS_ASSERT( _running, client_not_running, "client is not running" );
+   KOINOS_ASSERT( connected(), client_not_connected, "client is not connected" );
+   KOINOS_ASSERT( running(), client_not_running, "client is not running" );
 
-   auto promise = std::promise< std::string >();
+   auto promise = std::make_shared< std::promise< std::string > >();
 
    auto msg = std::make_shared< message >();
    msg->exchange = exchange::rpc;
@@ -336,66 +480,60 @@ std::shared_future< std::string > client_impl::rpc(
 
    if ( timeout.count() > 0 )
       msg->expiration = timeout.count();
+   else
+      KOINOS_ASSERT( policy != retry_policy::exponential_backoff, client_request_invalid, "cannot have an ${p} policy without a timeout", ("p", to_string( policy )) );
 
-   LOG(debug) << "Sending RPC";
-   LOG(debug) << " -> correlation_id: " << *msg->correlation_id;
-   LOG(debug) << " -> exchange:       " << msg->exchange;
-   LOG(debug) << " -> routing_key:    " << msg->routing_key;
-   LOG(debug) << " -> content_type:   " << msg->content_type;
-   LOG(debug) << " -> reply_to:       " << *msg->reply_to;
+   LOG(debug) << "Sending RPC from client: " << to_string( *msg );
 
-   if ( msg->expiration.has_value() )
-      LOG(debug) << " -> expiration:     " << *msg->expiration;
+   std::shared_future< std::string > fut = promise->get_future();
 
-   LOG(debug) << " -> data:           " << util::to_hex( msg->data );
+   auto err = publish( *msg, policy, "client rpc publication" );
 
-   auto err = _writer_broker->publish( *msg );
    if ( err != error_code::success )
    {
-      promise.set_exception( std::make_exception_ptr( broker_publish_error( "error sending RPC message" ) ) );
-      return promise.get_future();
+      promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
    }
-
-   std::shared_future< std::string > future_val;
+   else
    {
-      std::lock_guard< std::mutex > guard( _promise_map_mutex );
-      auto empl_res = _promise_map.emplace( *msg->correlation_id, std::move( promise ) );
+      request r;
+      if ( msg->expiration )
+         r.expiration  = std::chrono::system_clock::now() + timeout;
+      else
+         r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
+      r.policy         = policy;
+      r.response       = promise;
+      r.msg            = msg;
 
-      if ( !empl_res.second )
-      {
-         promise = std::promise< std::string >();
-         promise.set_exception( std::make_exception_ptr( correlation_id_collision( "error recording correlation id" ) ) );
-         return promise.get_future();
-      }
-
-      future_val = empl_res.first->second.get_future();
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      const auto& [ iter, success ] = _requests.insert( std::move( r ) );
+      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
    }
 
-   if ( msg->expiration.has_value() )
-   {
-      std::thread( &client_impl::policy_handler, this, future_val, msg, policy ).detach();
-   }
-
-   return future_val;
+   return fut;
 }
 
-void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
+void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type, retry_policy policy )
 {
-   KOINOS_ASSERT( _running, client_not_running, "client is not running" );
+   KOINOS_ASSERT( connected(), client_not_connected, "client is not connected" );
+   KOINOS_ASSERT( running(), client_not_running, "client is not running" );
 
-   auto err = _writer_broker->publish( message {
-      .exchange     = exchange::event,
-      .routing_key  = routing_key,
-      .content_type = content_type,
-      .data         = payload
-   } );
+   auto err = publish(
+      message {
+         .exchange     = exchange::event,
+         .routing_key  = routing_key,
+         .content_type = content_type,
+         .data         = payload
+      },
+      policy,
+      "client broadcast publication"
+   );
 
-   KOINOS_ASSERT( err == error_code::success, broker_publish_error, "error broadcasting message" );
+   KOINOS_ASSERT( err == error_code::success, client_publish_error, "error broadcasting message" );
 }
 
 } // detail
 
-client::client() : _my( std::make_unique< detail::client_impl >() ) {}
+client::client( boost::asio::io_context& io_context ) : _my( std::make_unique< detail::client_impl >( io_context ) ) {}
 client::~client() = default;
 
 void client::connect( const std::string& amqp_url, retry_policy policy )
@@ -413,14 +551,24 @@ std::shared_future< std::string > client::rpc(
    return _my->rpc( service, payload, timeout, policy, content_type );
 }
 
-void client::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type )
+void client::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type, retry_policy policy )
 {
-   _my->broadcast( routing_key, payload, content_type );
+   _my->broadcast( routing_key, payload, content_type, policy );
 }
 
-bool client::is_running() const
+bool client::running() const
 {
-   return _my->is_running();
+   return _my->running();
+}
+
+bool client::connected() const
+{
+   return _my->connected();
+}
+
+bool client::ready() const
+{
+   return _my->ready();
 }
 
 void client::disconnect()

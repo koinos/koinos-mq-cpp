@@ -51,12 +51,26 @@ int main( int argc, char** argv )
 
    initialize_logging( "mq_client", {} /* randomized unique ID */, level );
 
-   mq::client c;
+   boost::asio::io_context ioc;
+
+   mq::client c( ioc );
 
    try
    {
       c.connect( amqp_url );
+   }
+   catch ( const std::exception& e )
+   {
+      std::cerr << e.what();
+      return EXIT_FAILURE;
+   }
 
+   std::thread t( [&]() { ioc.run(); } );
+
+   int errcode = EXIT_SUCCESS;
+
+   try
+   {
       if ( broadcast_mode )
       {
          c.broadcast( routing_key, payload, content_type );
@@ -70,8 +84,11 @@ int main( int argc, char** argv )
    catch ( const std::exception& e )
    {
       std::cerr << e.what() << std::endl;
-      return EXIT_FAILURE;
+      errcode = EXIT_FAILURE;
    }
 
-   return EXIT_SUCCESS;
+   ioc.stop();
+   t.join();
+
+   return errcode;
 }
