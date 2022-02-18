@@ -346,8 +346,6 @@ void request_handler::consume()
       "request handler message consumption"
    );
 
-   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
-
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
    {
@@ -363,8 +361,10 @@ void request_handler::consume()
 
       _input_queue.push_back( msg );
 
-      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this ) );
+      boost::asio::post( _ioc, std::bind( &request_handler::handle_message, this ) );
    }
+
+   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
 }
 
 bool request_handler::running() const
