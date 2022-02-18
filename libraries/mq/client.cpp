@@ -354,8 +354,8 @@ void client_impl::consume()
       }
    }
 
+   boost::asio::post( _ioc, std::bind( &client_impl::policy_handler, this ) );
    boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
-   boost::asio::dispatch( _ioc, std::bind( &client_impl::policy_handler, this ) );
 }
 
 error_code client_impl::publish( const message& m, retry_policy policy, std::optional< std::string > action_log )
