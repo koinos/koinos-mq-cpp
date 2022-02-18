@@ -133,10 +133,7 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
    );
 
    if ( code != error_code::success )
-   {
-      _publisher_broker->disconnect();
       KOINOS_THROW( mq_connection_failure, "could not connect consumer to amqp server ${a}", ("a", amqp_url) );
-   }
 
    boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
 }
