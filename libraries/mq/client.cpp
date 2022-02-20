@@ -79,10 +79,10 @@ public:
 private:
    error_code on_connect( message_broker& m );
    void consume();
-   void policy_handler();
+   void policy_handler( std::chrono::time_point< std::chrono::system_clock > time );
    void abort();
    error_code publish( const message& m, retry_policy policy, std::optional< std::string > action_log );
-   std::vector< request_set::node_type > extract_expired_message();
+   std::vector< request_set::node_type > extract_expired_message( const std::chrono::time_point< std::chrono::system_clock >& time );
 
    void set_queue_name( const std::string& s );
    std::string get_queue_name();
@@ -320,6 +320,8 @@ void client_impl::consume()
       "client message consumption"
    );
 
+   auto arrival_time = std::chrono::system_clock::now();
+
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
    {
@@ -354,7 +356,7 @@ void client_impl::consume()
       }
    }
 
-   boost::asio::post( _ioc, std::bind( &client_impl::policy_handler, this ) );
+   boost::asio::post( _ioc, std::bind( &client_impl::policy_handler, this, arrival_time ) );
    boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
 }
 
@@ -381,7 +383,7 @@ error_code client_impl::publish( const message& m, retry_policy policy, std::opt
    );
 }
 
-std::vector< request_set::node_type > client_impl::extract_expired_message()
+std::vector< request_set::node_type > client_impl::extract_expired_message( const std::chrono::time_point< std::chrono::system_clock >& time )
 {
    std::vector< request_set::node_type > expired_messages;
 
@@ -390,7 +392,7 @@ std::vector< request_set::node_type > client_impl::extract_expired_message()
 
    for ( auto it = idx.begin(); it != idx.end(); ++it )
    {
-      if ( it->expiration > std::chrono::system_clock::now() )
+      if ( it->expiration > time )
          break;
 
       expired_messages.push_back( idx.extract( it ) );
@@ -399,12 +401,12 @@ std::vector< request_set::node_type > client_impl::extract_expired_message()
    return expired_messages;
 }
 
-void client_impl::policy_handler()
+void client_impl::policy_handler( std::chrono::time_point< std::chrono::system_clock > time )
 {
    if ( _stopped )
       return;
 
-   auto expired_messages = extract_expired_message();
+   auto expired_messages = extract_expired_message( time );
 
    for ( auto& req_node : expired_messages )
    {
