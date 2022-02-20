@@ -186,10 +186,12 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 void client_impl::abort()
 {
    std::lock_guard< std::mutex > lock( _requests_mutex );
-   for ( auto it = _requests.begin(); it != _requests.end(); ++it )
+   auto it = std::begin( _requests );
+   while ( it != std::end( _requests ) )
    {
       it->response->set_exception( std::make_exception_ptr( client_not_running( "client has disconnected" ) ) );
       _requests.erase( it );
+      it = std::begin( _requests );
    }
 }
 
@@ -390,12 +392,14 @@ std::vector< request_set::node_type > client_impl::extract_expired_message( cons
    std::lock_guard< std::mutex > guard( _requests_mutex );
    auto& idx = boost::multi_index::get< by_expiration >( _requests );
 
-   for ( auto it = idx.begin(); it != idx.end(); ++it )
+   auto it = std::begin( idx );
+   while ( it != idx.end() )
    {
       if ( it->expiration > time )
          break;
 
       expired_messages.push_back( idx.extract( it ) );
+      it = std::begin( idx );
    }
 
    return expired_messages;
