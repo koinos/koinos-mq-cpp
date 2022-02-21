@@ -205,7 +205,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( !socket )
    {
-      LOG(warning) << "Failed to create socket";
+      LOG(debug) << "Failed to create socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -214,7 +214,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( err != AMQP_STATUS_OK )
    {
-      LOG(warning) << "Failed to open socket";
+      LOG(debug) << "Failed to open socket";
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -234,7 +234,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( r ).value();
+      LOG(debug) << error_info( r ).value();
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -244,7 +244,7 @@ error_code message_broker_impl::connect_lockfree(
 
    if ( r.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( r ).value();
+      LOG(debug) << error_info( r ).value();
       disconnect_lockfree();
       return error_code::failure;
    }
@@ -266,7 +266,7 @@ error_code message_broker_impl::connect(
 
    if( result != AMQP_STATUS_OK )
    {
-      LOG(warning) << "Unable to parse provided AMQP url";
+      LOG(debug) << "Unable to parse provided AMQP url";
       return error_code::failure;
    }
 
@@ -289,7 +289,7 @@ error_code message_broker_impl::connect(
 
    if ( fn( _message_broker ) == error_code::failure )
    {
-      LOG(warning) << "Failure during connection callback";
+      LOG(debug) << "Failure during connection callback";
       std::lock_guard< std::mutex > lock( _amqp_mutex );
       disconnect_lockfree();
       return error_code::failure;
@@ -324,7 +324,7 @@ error_code message_broker_impl::declare_exchange(
 
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 
@@ -354,7 +354,7 @@ std::pair< error_code, std::string > message_broker_impl::declare_queue(
    auto reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return std::make_pair( error_code::failure, "" );
    }
 
@@ -389,7 +389,7 @@ error_code message_broker_impl::bind_queue(
    auto reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 
@@ -407,7 +407,7 @@ error_code message_broker_impl::bind_queue(
    reply = amqp_get_rpc_reply( _connection );
    if ( reply.reply_type != AMQP_RESPONSE_NORMAL )
    {
-      LOG(warning) << error_info( reply ).value();
+      LOG(debug) << error_info( reply ).value();
       return error_code::failure;
    }
 
@@ -481,7 +481,7 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 
       timeval tv;
       tv.tv_sec = 0;
-      tv.tv_usec = 10000;
+      tv.tv_usec = 100;
       auto reply = amqp_consume_message( _connection, &envelope, &tv, 0 );
 
       if ( reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
