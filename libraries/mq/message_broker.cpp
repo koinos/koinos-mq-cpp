@@ -481,7 +481,7 @@ std::pair< error_code, std::shared_ptr< message > > message_broker_impl::consume
 
       timeval tv;
       tv.tv_sec = 0;
-      tv.tv_usec = 1;
+      tv.tv_usec = 10000;
       auto reply = amqp_consume_message( _connection, &envelope, &tv, 0 );
 
       if ( reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION )
