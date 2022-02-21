@@ -5,7 +5,9 @@
 #include <koinos/util/hex.hpp>
 #include <koinos/util/random.hpp>
 
+#include <boost/asio.hpp>
 #include <boost/asio/dispatch.hpp>
+#include <boost/asio/high_resolution_timer.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/bind.hpp>
@@ -79,7 +81,7 @@ public:
 private:
    error_code on_connect( message_broker& m );
    void consume();
-   void policy_handler( std::chrono::time_point< std::chrono::system_clock > time );
+   void policy_handler( const boost::system::error_code& ec );
    void abort();
    error_code publish( const message& m, retry_policy policy, std::optional< std::string > action_log );
    std::vector< request_set::node_type > extract_expired_message( const std::chrono::time_point< std::chrono::system_clock >& time );
@@ -102,6 +104,7 @@ private:
    std::atomic< bool >                                  _stopped = false;
    retryer                                              _retryer;
    std::string                                          _amqp_url;
+   boost::asio::high_resolution_timer                   _policy_timer;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
@@ -109,7 +112,8 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
    _writer_broker( std::make_shared< message_broker >() ),
    _reader_broker( std::make_shared< message_broker >() ),
    _signals( io_context ),
-   _retryer( io_context, std::chrono::milliseconds( _max_expiration ) )
+   _retryer( io_context, std::chrono::milliseconds( _max_expiration ) ),
+   _policy_timer( io_context )
 {
    _signals.add( SIGINT );
    _signals.add( SIGTERM );
@@ -181,10 +185,13 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
       KOINOS_THROW( mq_connection_failure, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
    boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+   _policy_timer.expires_after( std::chrono::milliseconds( 100 ) );
+   _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
 }
 
 void client_impl::abort()
 {
+   _policy_timer.cancel();
    std::lock_guard< std::mutex > lock( _requests_mutex );
    auto it = std::begin( _requests );
    while ( it != std::end( _requests ) )
@@ -322,7 +329,7 @@ void client_impl::consume()
       "client message consumption"
    );
 
-   auto arrival_time = std::chrono::system_clock::now();
+   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
 
    if ( code == error_code::time_out ) {}
    else if ( code != error_code::success )
@@ -357,9 +364,6 @@ void client_impl::consume()
          }
       }
    }
-
-   boost::asio::post( _ioc, std::bind( &client_impl::policy_handler, this, arrival_time ) );
-   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
 }
 
 error_code client_impl::publish( const message& m, retry_policy policy, std::optional< std::string > action_log )
@@ -405,12 +409,12 @@ std::vector< request_set::node_type > client_impl::extract_expired_message( cons
    return expired_messages;
 }
 
-void client_impl::policy_handler( std::chrono::time_point< std::chrono::system_clock > time )
+void client_impl::policy_handler( const boost::system::error_code& ec )
 {
-   if ( _stopped )
+   if ( ec == boost::asio::error::operation_aborted || _stopped )
       return;
 
-   auto expired_messages = extract_expired_message( time );
+   auto expired_messages = extract_expired_message( std::chrono::system_clock::now() );
 
    for ( auto& req_node : expired_messages )
    {
@@ -462,6 +466,9 @@ void client_impl::policy_handler( std::chrono::time_point< std::chrono::system_c
          break;
       }
    }
+
+   _policy_timer.expires_after( std::chrono::milliseconds( 100 ) );
+   _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
 }
 
 std::shared_future< std::string > client_impl::rpc(
