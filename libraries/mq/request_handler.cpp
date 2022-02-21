@@ -50,7 +50,7 @@ void request_handler::handle_message()
 
                      _output_queue.push_back( reply );
 
-                     boost::asio::post( _ioc, std::bind( &request_handler::publish, this ) );
+                     boost::asio::dispatch( _ioc, std::bind( &request_handler::publish, this ) );
                   }
                },
                [&]( const msg_handler_void_func& f )
