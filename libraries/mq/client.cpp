@@ -7,7 +7,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/asio/dispatch.hpp>
-#include <boost/asio/high_resolution_timer.hpp>
+#include <boost/asio/system_timer.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/bind.hpp>
@@ -104,7 +104,7 @@ private:
    std::atomic< bool >                                  _stopped = false;
    retryer                                              _retryer;
    std::string                                          _amqp_url;
-   boost::asio::high_resolution_timer                   _policy_timer;
+   boost::asio::system_timer                            _policy_timer;
 };
 
 client_impl::client_impl( boost::asio::io_context& io_context ) :
@@ -185,8 +185,6 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
       KOINOS_THROW( mq_connection_failure, "could not connect to endpoint: ${e}", ("e", amqp_url) );
 
    boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
-   _policy_timer.expires_after( std::chrono::milliseconds( 100 ) );
-   _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
 }
 
 void client_impl::abort()
@@ -467,8 +465,20 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
       }
    }
 
-   _policy_timer.expires_after( std::chrono::milliseconds( 100 ) );
-   _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+   {
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      auto& idx = boost::multi_index::get< by_expiration >( _requests );
+
+      auto it = std::begin( idx );
+      if ( it != idx.end() )
+      {
+         if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
+         {
+            _policy_timer.expires_at( it->expiration );
+            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+         }
+      }
+   }
 }
 
 std::shared_future< std::string > client_impl::rpc(
@@ -520,6 +530,12 @@ std::shared_future< std::string > client_impl::rpc(
       std::lock_guard< std::mutex > guard( _requests_mutex );
       const auto& [ iter, success ] = _requests.insert( std::move( r ) );
       KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
+
+      if ( _policy_timer.expiry() > std::chrono::system_clock::now() + timeout || _policy_timer.expiry() < std::chrono::system_clock::now() )
+      {
+         _policy_timer.expires_after( timeout );
+         _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+      }
    }
 
    return fut;
