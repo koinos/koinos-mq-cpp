@@ -11,14 +11,10 @@
 
 namespace koinos::mq {
 
-void request_handler::handle_message()
+void request_handler::handle_message( std::shared_ptr< message > msg )
 {
    if ( _stopped )
       return;
-
-   std::shared_ptr< message > msg;
-
-   _input_queue.pull_front( msg );
 
    auto reply = std::make_shared< message >();
    auto routing_itr = _handler_map.find( std::make_pair( msg->exchange, msg->routing_key ) );
@@ -48,9 +44,7 @@ void request_handler::handle_message()
                      reply->data           = resp;
                      reply->delivery_tag   = msg->delivery_tag;
 
-                     _output_queue.push_back( reply );
-
-                     boost::asio::dispatch( _ioc, std::bind( &request_handler::publish, this ) );
+                     boost::asio::dispatch( _ioc, std::bind( &request_handler::publish, this, reply ) );
                   }
                },
                [&]( const msg_handler_void_func& f )
@@ -264,14 +258,10 @@ void request_handler::add_msg_handler(
    add_msg_handler( exchange, routing_key, exclusive, verify, msg_handler_func( handler ) );
 }
 
-void request_handler::publish()
+void request_handler::publish( std::shared_ptr< message > m )
 {
    if ( _stopped )
       return;
-
-   std::shared_ptr< message > m;
-
-   _output_queue.pull_front( m );
 
    auto r = _retryer.with_policy(
       retry_policy::exponential_backoff,
@@ -357,9 +347,7 @@ void request_handler::consume()
    {
       LOG(debug) << "Request handler received message: " << to_string( *msg );
 
-      _input_queue.push_back( msg );
-
-      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this ) );
+      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this, msg ) );
    }
 }
 

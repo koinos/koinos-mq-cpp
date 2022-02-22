@@ -9,7 +9,6 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/container/flat_map.hpp>
-#include <boost/thread/sync_bounded_queue.hpp>
 #include <boost/tuple/tuple.hpp>
 
 #include <atomic>
@@ -28,7 +27,6 @@ using handler_verify_func     = std::function< bool( const std::string& ) >;
 using handler_pair            = std::pair< handler_verify_func, msg_handler_func >;
 using msg_routing_map         = boost::container::flat_map< std::pair< std::string, std::string >, std::vector< handler_pair > >;
 using binding_queue_map       = boost::container::flat_map< std::pair< std::string, std::string >, std::string >;
-using synced_msg_queue        = boost::concurrent::sync_bounded_queue< std::shared_ptr< message > >;
 
 struct message_handler
 {
@@ -38,10 +36,6 @@ struct message_handler
    handler_verify_func verify;
    msg_handler_func handler;
 };
-
-namespace constants {
-   constexpr std::size_t max_queue_size = 1024;
-} // constants
 
 class request_handler : public std::enable_shared_from_this< request_handler >
 {
@@ -70,8 +64,8 @@ class request_handler : public std::enable_shared_from_this< request_handler >
 
    private:
       void consume();
-      void publish();
-      void handle_message();
+      void publish( std::shared_ptr< message > msg );
+      void handle_message( std::shared_ptr< message > msg );
 
       error_code on_connect( message_broker& m );
 
@@ -99,9 +93,6 @@ class request_handler : public std::enable_shared_from_this< request_handler >
       msg_routing_map                   _handler_map;
 
       std::string                       _amqp_url;
-
-      synced_msg_queue                  _input_queue{ constants::max_queue_size };
-      synced_msg_queue                  _output_queue{ constants::max_queue_size };
 
       std::vector< message_handler >    _message_handlers;
       boost::asio::io_context&          _ioc;
