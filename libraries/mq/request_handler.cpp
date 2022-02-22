@@ -13,48 +13,59 @@ namespace koinos::mq {
 
 void request_handler::handle_message( std::shared_ptr< message > msg )
 {
-   if ( _stopped )
-      return;
-
-   auto reply = std::make_shared< message >();
-   auto routing_itr = _handler_map.find( std::make_pair( msg->exchange, msg->routing_key ) );
-
-   if ( routing_itr == _handler_map.end() )
+   try
    {
-      LOG(error) << "Did not find route: " << msg->exchange << ":" << msg->routing_key;
-   }
-   else
-   {
-      for ( const auto& h_pair : routing_itr->second )
+      if ( _stopped )
+         return;
+
+      auto reply = std::make_shared< message >();
+      auto routing_itr = _handler_map.find( std::make_pair( msg->exchange, msg->routing_key ) );
+
+      if ( routing_itr == _handler_map.end() )
       {
-         if ( !h_pair.first( msg->content_type ) )
-            continue;
-
-         std::visit(
-            util::overloaded {
-               [&]( const msg_handler_string_func& f )
-               {
-                  auto resp = f( msg->data );
-                  if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
-                  {
-                     reply->exchange       = exchange::rpc;
-                     reply->routing_key    = *msg->reply_to;
-                     reply->content_type   = msg->content_type;
-                     reply->correlation_id = *msg->correlation_id;
-                     reply->data           = resp;
-                     reply->delivery_tag   = msg->delivery_tag;
-
-                     boost::asio::dispatch( _ioc, std::bind( &request_handler::publish, this, reply ) );
-                  }
-               },
-               [&]( const msg_handler_void_func& f )
-               {
-                  f( msg->data );
-               },
-               [&]( const auto& ) {}
-            },h_pair.second );
-         break;
+         LOG(error) << "Did not find route: " << msg->exchange << ":" << msg->routing_key;
       }
+      else
+      {
+         for ( const auto& h_pair : routing_itr->second )
+         {
+            if ( !h_pair.first( msg->content_type ) )
+               continue;
+
+            std::visit(
+               util::overloaded {
+                  [&]( const msg_handler_string_func& f )
+                  {
+                     auto resp = f( msg->data );
+                     if ( msg->reply_to.has_value() && msg->correlation_id.has_value() )
+                     {
+                        reply->exchange       = exchange::rpc;
+                        reply->routing_key    = *msg->reply_to;
+                        reply->content_type   = msg->content_type;
+                        reply->correlation_id = *msg->correlation_id;
+                        reply->data           = resp;
+                        reply->delivery_tag   = msg->delivery_tag;
+
+                        boost::asio::dispatch( _ioc, std::bind( &request_handler::publish, this, reply ) );
+                     }
+                  },
+                  [&]( const msg_handler_void_func& f )
+                  {
+                     f( msg->data );
+                  },
+                  [&]( const auto& ) {}
+               },h_pair.second );
+            break;
+         }
+      }
+   }
+   catch ( const std::exception& e )
+   {
+      LOG(warning) << "Error: " << e.what();
+   }
+   catch ( const boost::exception& e )
+   {
+      LOG(warning) << "Error: " << boost::diagnostic_information( e );
    }
 }
 
@@ -260,94 +271,116 @@ void request_handler::add_msg_handler(
 
 void request_handler::publish( std::shared_ptr< message > m )
 {
-   if ( _stopped )
-      return;
-
-   auto r = _retryer.with_policy(
-      retry_policy::exponential_backoff,
-      [&]() -> error_code
-      {
-         error_code e = _publisher_broker->publish( *m );
-
-         if ( e == error_code::success )
-            return e;
-
-         _publisher_broker->disconnect();
-         e = _publisher_broker->connect( _amqp_url );
-
-         if ( e == error_code::success )
-            e = _publisher_broker->publish( *m );
-
-         return e;
-      },
-      "request handler publication"
-   );
-
-   if ( r != error_code::success )
+   try
    {
-      LOG(error) << "An error has occurred while publishing message on the request handler";
+      if ( _stopped )
+         return;
+
+      auto r = _retryer.with_policy(
+         retry_policy::exponential_backoff,
+         [&]() -> error_code
+         {
+            error_code e = _publisher_broker->publish( *m );
+
+            if ( e == error_code::success )
+               return e;
+
+            _publisher_broker->disconnect();
+            e = _publisher_broker->connect( _amqp_url );
+
+            if ( e == error_code::success )
+               e = _publisher_broker->publish( *m );
+
+            return e;
+         },
+         "request handler publication"
+      );
+
+      if ( r != error_code::success )
+      {
+         LOG(error) << "An error has occurred while publishing message on the request handler";
+      }
+   }
+   catch ( const std::exception& e )
+   {
+      LOG(warning) << "Error: " << e.what();
+   }
+   catch ( const boost::exception& e )
+   {
+      LOG(warning) << "Error: " << boost::diagnostic_information( e );
    }
 }
 
 void request_handler::consume()
 {
-   if ( _stopped )
-      return;
+   try
+   {
+      if ( _stopped )
+         return;
 
-   error_code code;
-   std::shared_ptr< message > msg;
+      error_code code;
+      std::shared_ptr< message > msg;
 
-   code = _retryer.with_policy(
-      retry_policy::exponential_backoff,
-      [&]() -> error_code
-      {
-         auto [ e, m ] = _consumer_broker->consume();
-
-         if ( e != error_code::failure )
+      code = _retryer.with_policy(
+         retry_policy::exponential_backoff,
+         [&]() -> error_code
          {
-            msg = m;
-            return e;
-         }
-
-         _consumer_broker->disconnect();
-
-         e = _consumer_broker->connect(
-            _amqp_url,
-            [this]( message_broker& m ) -> error_code
-            {
-               return this->on_connect( m );
-            }
-         );
-
-         if ( e == error_code::success )
-         {
-            std::tie( e, m ) = _consumer_broker->consume();
+            auto [ e, m ] = _consumer_broker->consume();
 
             if ( e != error_code::failure )
+            {
                msg = m;
-         }
+               return e;
+            }
 
-         return e;
-      },
-      "request handler message consumption"
-   );
+            _consumer_broker->disconnect();
 
-   boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
+            e = _consumer_broker->connect(
+               _amqp_url,
+               [this]( message_broker& m ) -> error_code
+               {
+                  return this->on_connect( m );
+               }
+            );
 
-   if ( code == error_code::time_out ) {}
-   else if ( code != error_code::success )
-   {
-      LOG(warning) << "Request handler failed to consume message";
+            if ( e == error_code::success )
+            {
+               std::tie( e, m ) = _consumer_broker->consume();
+
+               if ( e != error_code::failure )
+                  msg = m;
+            }
+
+            return e;
+         },
+         "request handler message consumption"
+      );
+
+      boost::asio::post( _ioc, std::bind( &request_handler::consume, this ) );
+
+      if ( code == error_code::time_out ) {}
+      else if ( code != error_code::success )
+      {
+         LOG(warning) << "Request handler failed to consume message";
+      }
+      else if ( !msg )
+      {
+         LOG(debug) << "Request handler message consumption succeeded but resulted in an empty message";
+      }
+      else
+      {
+         LOG(debug) << "Request handler received message: " << to_string( *msg );
+
+         boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this, msg ) );
+      }
    }
-   else if ( !msg )
+   catch ( const std::exception& e )
    {
-      LOG(debug) << "Request handler message consumption succeeded but resulted in an empty message";
+      LOG(warning) << "Error: " << e.what();
    }
-   else
+   catch ( const boost::exception& e )
    {
-      LOG(debug) << "Request handler received message: " << to_string( *msg );
-
-      boost::asio::dispatch( _ioc, std::bind( &request_handler::handle_message, this, msg ) );
+      LOG(warning) << "Error: " << boost::diagnostic_information( e );
    }
 }
 

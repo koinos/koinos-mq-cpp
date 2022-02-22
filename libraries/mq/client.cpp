@@ -6,7 +6,6 @@
 #include <koinos/util/random.hpp>
 
 #include <boost/asio.hpp>
-#include <boost/asio/dispatch.hpp>
 #include <boost/asio/system_timer.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -286,81 +285,92 @@ error_code client_impl::on_connect( message_broker& m )
 
 void client_impl::consume()
 {
-   if ( _stopped )
-      return;
+   try
+   {
+      if ( _stopped )
+         return;
 
-   error_code code;
-   std::shared_ptr< message > msg;
+      error_code code;
+      std::shared_ptr< message > msg;
 
-   code = _retryer.with_policy(
-      retry_policy::exponential_backoff,
-      [&]() -> error_code
-      {
-         auto [ e, m ] = _reader_broker->consume();
-
-         if ( e != error_code::failure )
+      code = _retryer.with_policy(
+         retry_policy::exponential_backoff,
+         [&]() -> error_code
          {
-            msg = m;
-            return e;
-         }
-
-         _reader_broker->disconnect();
-
-         e = _reader_broker->connect(
-            _amqp_url,
-            [this]( message_broker& m ) -> error_code
-            {
-               return this->on_connect( m );
-            }
-         );
-
-         if ( e == error_code::success )
-         {
-            std::tie( e, m ) = _reader_broker->consume();
+            auto [ e, m ] = _reader_broker->consume();
 
             if ( e != error_code::failure )
+            {
                msg = m;
-         }
+               return e;
+            }
 
-         return e;
-      },
-      "client message consumption"
-   );
+            _reader_broker->disconnect();
 
-   boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+            e = _reader_broker->connect(
+               _amqp_url,
+               [this]( message_broker& m ) -> error_code
+               {
+                  return this->on_connect( m );
+               }
+            );
 
-   if ( code == error_code::time_out ) {}
-   else if ( code != error_code::success )
-   {
-      LOG(warning) << "Client failed to consume message";
-   }
-   else if ( !msg )
-   {
-      LOG(debug) << "Client message consumption succeeded but resulted in an empty message";
-   }
-   else
-   {
-      if ( !msg->correlation_id.has_value() )
+            if ( e == error_code::success )
+            {
+               std::tie( e, m ) = _reader_broker->consume();
+
+               if ( e != error_code::failure )
+                  msg = m;
+            }
+
+            return e;
+         },
+         "client message consumption"
+      );
+
+      boost::asio::post( _ioc, std::bind( &client_impl::consume, this ) );
+
+      if ( code == error_code::time_out ) {}
+      else if ( code != error_code::success )
       {
-         LOG(warning) << "Client received message without a correlation id";
+         LOG(warning) << "Client failed to consume message";
+      }
+      else if ( !msg )
+      {
+         LOG(debug) << "Client message consumption succeeded but resulted in an empty message";
       }
       else
       {
-         LOG(debug) << "Client received message: " << to_string( *msg );
-
-         std::lock_guard< std::mutex > lock( _requests_mutex );
-         const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
-         auto it = idx.find( *msg->correlation_id );
-         if ( it != idx.end() )
+         if ( !msg->correlation_id.has_value() )
          {
-            it->response->set_value( std::move( msg->data ) );
-            _requests.erase( it );
+            LOG(warning) << "Client received message without a correlation id";
          }
          else
          {
-            LOG(warning) << "Client could not find correlation ID in request set: " << *msg->correlation_id;
+            LOG(debug) << "Client received message: " << to_string( *msg );
+
+            std::lock_guard< std::mutex > lock( _requests_mutex );
+            const auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+            auto it = idx.find( *msg->correlation_id );
+            if ( it != idx.end() )
+            {
+               it->response->set_value( std::move( msg->data ) );
+               _requests.erase( it );
+            }
+            else
+            {
+               LOG(warning) << "Client could not find correlation ID in request set: " << *msg->correlation_id;
+            }
          }
       }
+   }
+   catch ( const std::exception& e )
+   {
+      LOG(warning) << "Error: " << e.what();
+   }
+   catch ( const boost::exception& e )
+   {
+      LOG(warning) << "Error: " << boost::diagnostic_information( e );
    }
 }
 
@@ -409,75 +419,86 @@ std::vector< request_set::node_type > client_impl::extract_expired_message( cons
 
 void client_impl::policy_handler( const boost::system::error_code& ec )
 {
-   if ( ec == boost::asio::error::operation_aborted || _stopped )
-      return;
-
-   auto expired_messages = extract_expired_message( std::chrono::system_clock::now() );
-
-   for ( auto& req_node : expired_messages )
+   try
    {
-      switch ( req_node.value().policy )
-      {
-      case retry_policy::none:
-         req_node.value().response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *req_node.value().correlation_id() ) ) );
+      if ( ec == boost::asio::error::operation_aborted || _stopped )
          return;
-      case retry_policy::exponential_backoff:
-         LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
-         LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
 
-         // Adjust our message for another attempt
-         auto old_correlation_id = req_node.value().msg->correlation_id.value();
+      auto expired_messages = extract_expired_message( std::chrono::system_clock::now() );
 
-         req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
-         req_node.value().msg->expiration     = std::min( req_node.value().msg->expiration.value() * 2, _max_expiration );
-         req_node.value().msg->reply_to       = get_queue_name();
-
-         LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
-            << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
-
-         req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
-
-         auto promise = req_node.value().response;
-
-         const auto [ it, inserted ] = [&]() {
-            std::lock_guard< std::mutex > guard( _requests_mutex );
-            const auto res = _requests.insert( std::move( req_node ) );
-            return std::make_pair( res.position, res.inserted );
-         }();
-
-         if ( inserted )
+      for ( auto& req_node : expired_messages )
+      {
+         switch ( req_node.value().policy )
          {
-            auto err = publish( *it->msg, it->policy, "client rpc republication" );
+         case retry_policy::none:
+            req_node.value().response->set_exception( std::make_exception_ptr( client_timeout_error( "request timeout: " + *req_node.value().correlation_id() ) ) );
+            return;
+         case retry_policy::exponential_backoff:
+            LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
+            LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
 
-            if ( err != error_code::success )
-            {
-               promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
+            // Adjust our message for another attempt
+            auto old_correlation_id = req_node.value().msg->correlation_id.value();
+
+            req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
+            req_node.value().msg->expiration     = std::min( req_node.value().msg->expiration.value() * 2, _max_expiration );
+            req_node.value().msg->reply_to       = get_queue_name();
+
+            LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
+               << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
+
+            req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
+
+            auto promise = req_node.value().response;
+
+            const auto [ it, inserted ] = [&]() {
                std::lock_guard< std::mutex > guard( _requests_mutex );
-               _requests.erase( it );
+               const auto res = _requests.insert( std::move( req_node ) );
+               return std::make_pair( res.position, res.inserted );
+            }();
+
+            if ( inserted )
+            {
+               auto err = publish( *it->msg, it->policy, "client rpc republication" );
+
+               if ( err != error_code::success )
+               {
+                  promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
+                  std::lock_guard< std::mutex > guard( _requests_mutex );
+                  _requests.erase( it );
+               }
+            }
+            else
+            {
+               promise->set_exception( std::make_exception_ptr( client_request_insertion_error( "failed to insert request, possible a correlation id collision" ) ) );
+            }
+
+            break;
+         }
+      }
+
+      {
+         std::lock_guard< std::mutex > guard( _requests_mutex );
+         auto& idx = boost::multi_index::get< by_expiration >( _requests );
+
+         auto it = std::begin( idx );
+         if ( it != idx.end() )
+         {
+            if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
+            {
+               _policy_timer.expires_at( it->expiration );
+               _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
             }
          }
-         else
-         {
-            promise->set_exception( std::make_exception_ptr( client_request_insertion_error( "failed to insert request, possible a correlation id collision" ) ) );
-         }
-
-         break;
       }
    }
-
+   catch ( const std::exception& e )
    {
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-      auto& idx = boost::multi_index::get< by_expiration >( _requests );
-
-      auto it = std::begin( idx );
-      if ( it != idx.end() )
-      {
-         if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
-         {
-            _policy_timer.expires_at( it->expiration );
-            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
-         }
-      }
+      LOG(warning) << "Error: " << e.what();
+   }
+   catch ( const boost::exception& e )
+   {
+      LOG(warning) << "Error: " << boost::diagnostic_information( e );
    }
 }
 
