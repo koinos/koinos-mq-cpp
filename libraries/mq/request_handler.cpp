@@ -140,7 +140,7 @@ void request_handler::connect( const std::string& amqp_url, retry_policy policy 
 
 error_code request_handler::on_connect( message_broker& m )
 {
-   error_code ec;
+   error_code ec = error_code::success;
 
    _queue_bindings.clear();
    _handler_map.clear();
@@ -150,7 +150,6 @@ error_code request_handler::on_connect( message_broker& m )
       std::string queue_name;
       auto binding = std::make_pair( msg_handler.exchange, msg_handler.routing_key );
       auto binding_itr = _queue_bindings.find( binding );
-      error_code ec = error_code::success;
 
       if ( binding_itr == _queue_bindings.end() )
       {
@@ -207,7 +206,7 @@ error_code request_handler::on_connect( message_broker& m )
          {
             _handler_map[ binding ].pop_back();
             LOG(error) << "Default binding route not found in handler map";
-            ec = error_code::failure;
+            return error_code::failure;
          }
          else
          {
