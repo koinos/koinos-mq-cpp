@@ -123,14 +123,12 @@ client_impl::client_impl( boost::asio::io_context& io_context ) :
 
    _signals.async_wait( [&]( const boost::system::error_code& err, int num )
    {
-      _stopped = true;
       abort();
    } );
 }
 
 client_impl::~client_impl()
 {
-   _retryer.cancel();
    abort();
    disconnect();
 }
@@ -189,6 +187,8 @@ void client_impl::connect( const std::string& amqp_url, retry_policy policy )
 
 void client_impl::abort()
 {
+   _stopped = true;
+   _retryer.cancel();
    _policy_timer.cancel();
    std::lock_guard< std::mutex > lock( _requests_mutex );
    auto it = std::begin( _requests );

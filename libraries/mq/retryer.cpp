@@ -28,6 +28,7 @@ retryer::retryer( boost::asio::io_context& ioc, std::chrono::milliseconds max_ti
 
 void retryer::cancel()
 {
+   LOG(info) << "retryer canceled";
    _signals.clear();
    std::lock_guard guard( _timers_mutex );
    for ( const auto& timer : _timers )
@@ -36,12 +37,16 @@ void retryer::cancel()
 
 void retryer::add_timer( timer_ptr t )
 {
+   LOG(info) << "add_timer";
    std::lock_guard guard( _timers_mutex );
-   _timers.insert( t );
+   const auto [ it, success ] = _timers.insert( t );
+   if ( success )
+      LOG(info) << "timer added";
 }
 
 void retryer::remove_timer( timer_ptr t )
 {
+   LOG(info) << "remove_timer";
    std::lock_guard guard( _timers_mutex );
    auto it = _timers.find( t );
    if ( it != _timers.end() )
@@ -58,11 +63,13 @@ void retryer::retry_logic(
 {
    if ( ec == boost::asio::error::operation_aborted )
    {
+      LOG(info) << "timer aborted";
       p->set_value( error_code::failure );
       remove_timer( timer );
       return;
    }
 
+   LOG(info) << "calling f()";
    error_code e = f();
 
    if ( e == error_code::failure )
@@ -77,6 +84,7 @@ void retryer::retry_logic(
    }
    else
    {
+      LOG(info) << "resolving promise";
       p->set_value( e );
       remove_timer( timer );
    }
@@ -96,6 +104,8 @@ error_code retryer::with_policy(
 
    std::shared_ptr< boost::asio::high_resolution_timer > timer = std::make_shared< boost::asio::high_resolution_timer >( _ioc );
 
+   LOG(info) << "with_policy";
+
    switch ( policy )
    {
       case retry_policy::none:
@@ -107,6 +117,7 @@ error_code retryer::with_policy(
 
          timer->expires_after( timeout );
          timer->async_wait( boost::bind( &retryer::retry_logic, this, boost::asio::placeholders::error, timer, promise, fn, timeout, message ) );
+         LOG(info) << "expires_after";
          add_timer( timer );
          break;
    }
