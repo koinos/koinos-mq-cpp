@@ -509,7 +509,7 @@ std::shared_future< std::string > client_impl::rpc(
    retry_policy policy,
    const std::string& content_type )
 {
-   KOINOS_ASSERT( connected(), client_not_connected, "client is not connected" );
+   KOINOS_ASSERT( _writer_broker->connected(), client_not_connected, "client is not connected" );
    KOINOS_ASSERT( running(), client_not_running, "client is not running" );
 
    auto promise = std::make_shared< std::promise< std::string > >();
@@ -564,7 +564,7 @@ std::shared_future< std::string > client_impl::rpc(
 
 void client_impl::broadcast( const std::string& routing_key, const std::string& payload, const std::string& content_type, retry_policy policy )
 {
-   KOINOS_ASSERT( connected(), client_not_connected, "client is not connected" );
+   KOINOS_ASSERT( _writer_broker->connected(), client_not_connected, "client is not connected" );
    KOINOS_ASSERT( running(), client_not_running, "client is not running" );
 
    auto err = publish(
