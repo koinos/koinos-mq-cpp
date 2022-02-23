@@ -486,6 +486,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
          {
             if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
             {
+               _policy_timer.cancel();
                _policy_timer.expires_at( it->expiration );
                _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
             }
@@ -554,6 +555,7 @@ std::shared_future< std::string > client_impl::rpc(
 
       if ( _policy_timer.expiry() > std::chrono::system_clock::now() + timeout || _policy_timer.expiry() < std::chrono::system_clock::now() )
       {
+         _policy_timer.cancel();
          _policy_timer.expires_after( timeout );
          _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
       }
