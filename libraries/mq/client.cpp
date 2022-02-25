@@ -448,10 +448,13 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
                << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
 
-            req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
+            req_node.value().expiration = std::chrono::time_point< std::chrono::system_clock >::max();
 
             auto promise = req_node.value().response;
 
+            // We must ensure that the request exists in the request set prior to publication
+            // otherwise it is possible for the response to arrive before the insertion has
+            // been completed.
             const auto [ it, inserted ] = [&]() {
                std::lock_guard< std::mutex > guard( _requests_mutex );
                const auto res = _requests.insert( std::move( req_node ) );
@@ -462,10 +465,15 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             {
                auto err = publish( *it->msg, it->policy, "client rpc republication" );
 
-               if ( err != error_code::success )
+               std::lock_guard< std::mutex > guard( _requests_mutex );
+               if ( err == error_code::success )
+               {
+                  // Now that the message has been published we can calculate the message expiration.
+                  _requests.modify( it, [&]( request& r ) { r.expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *r.msg->expiration ); } );
+               }
+               else
                {
                   promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
-                  std::lock_guard< std::mutex > guard( _requests_mutex );
                   _requests.erase( it );
                }
             }
@@ -480,7 +488,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
 
       {
          // Now that all expired messages have been processed we must reset the the policy timer
-         // to come back and handle the next expiration.
+         // to come back and handle the next expiration if it exists.
          std::lock_guard< std::mutex > guard( _requests_mutex );
 
          auto& idx = boost::multi_index::get< by_expiration >( _requests );
