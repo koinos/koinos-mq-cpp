@@ -486,7 +486,6 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
          {
             if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
             {
-               _policy_timer.cancel();
                _policy_timer.expires_at( it->expiration );
                _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
             }
@@ -532,32 +531,47 @@ std::shared_future< std::string > client_impl::rpc(
 
    std::shared_future< std::string > fut = promise->get_future();
 
+   request r;
+   r.expiration = std::chrono::time_point< std::chrono::system_clock >::max();
+   r.policy     = policy;
+   r.response   = promise;
+   r.msg        = msg;
+
+   request_set::iterator iter;
+   bool success = false;
+   {
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      std::tie( iter, success ) = _requests.insert( std::move( r ) );
+      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
+   }
+
    auto err = publish( *msg, policy, "client rpc publication" );
 
    if ( err != error_code::success )
    {
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      _requests.erase( iter );
       promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
    }
    else
    {
-      request r;
-      if ( msg->expiration )
-         r.expiration  = std::chrono::system_clock::now() + timeout;
-      else
-         r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
-      r.policy         = policy;
-      r.response       = promise;
-      r.msg            = msg;
+      auto message_expiration = std::chrono::system_clock::now() + timeout;
 
       std::lock_guard< std::mutex > guard( _requests_mutex );
-      const auto& [ iter, success ] = _requests.insert( std::move( r ) );
-      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
 
-      if ( _policy_timer.expiry() > std::chrono::system_clock::now() + timeout || _policy_timer.expiry() < std::chrono::system_clock::now() )
+      auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+      auto it = idx.find( *msg->correlation_id );
+
+      if ( it != idx.end() )
       {
-         _policy_timer.cancel();
-         _policy_timer.expires_after( timeout );
-         _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+         if ( msg->expiration )
+            idx.modify( it, [&]( request &r ) { r.expiration = message_expiration; } );
+
+         if ( _policy_timer.expiry() > message_expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
+         {
+            _policy_timer.expires_after( timeout );
+            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+         }
       }
    }
 
