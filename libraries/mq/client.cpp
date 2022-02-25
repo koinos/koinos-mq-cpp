@@ -451,6 +451,7 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             req_node.value().expiration = std::chrono::time_point< std::chrono::system_clock >::max();
 
             auto promise = req_node.value().response;
+            auto correlation_id = *req_node.value().msg->correlation_id;
 
             // We must ensure that the request exists in the request set prior to publication
             // otherwise it is possible for the response to arrive before the insertion has
@@ -466,15 +467,24 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
                auto err = publish( *it->msg, it->policy, "client rpc republication" );
 
                std::lock_guard< std::mutex > guard( _requests_mutex );
-               if ( err == error_code::success )
+
+               // We cannot assume the request still exists in the request set so we
+               // reacquire the iterator.
+               auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+               auto iter = idx.find( correlation_id );
+
+               if ( iter != idx.end() )
                {
-                  // Now that the message has been published we can calculate the message expiration.
-                  _requests.modify( it, [&]( request& r ) { r.expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *r.msg->expiration ); } );
-               }
-               else
-               {
-                  promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
-                  _requests.erase( it );
+                  if ( err == error_code::success )
+                  {
+                     // Now that the message has been published we can calculate the message expiration.
+                     idx.modify( iter, [&]( request& r ) { r.expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *r.msg->expiration ); } );
+                  }
+                  else
+                  {
+                     promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
+                     idx.erase( iter );
+                  }
                }
             }
             else
@@ -550,41 +560,39 @@ std::shared_future< std::string > client_impl::rpc(
    r.response   = promise;
    r.msg        = msg;
 
-   request_set::iterator iter;
-   bool success = false;
-
    // We must ensure that the request exists in the request set prior to publication
    // otherwise it is possible for the response to arrive before the insertion has
    // been completed.
    {
       std::lock_guard< std::mutex > guard( _requests_mutex );
-      std::tie( iter, success ) = _requests.insert( std::move( r ) );
+      const auto& [ iter, success ]= _requests.insert( std::move( r ) );
       KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
    }
 
    auto err = publish( *msg, policy, "client rpc publication" );
 
-   if ( err != error_code::success )
+
+   std::lock_guard< std::mutex > guard( _requests_mutex );
+
+   // We cannot assume the request still exists in the request set so we
+   // reacquire the iterator.
+   auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+   auto it = idx.find( *msg->correlation_id );
+
+   if ( it != idx.end() )
    {
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-      _requests.erase( iter );
-      promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
-   }
-   else if ( msg->expiration )
-   {
-      // In the case where the message does in fact expire, we now know the approximate
-      // time the message has been sent to AMQP server and we should update the request to
-      // reflect it. Now is a good time to set the policy timer.
-
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-
-      auto message_expiration = std::chrono::system_clock::now() + timeout;
-
-      auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
-      auto it = idx.find( *msg->correlation_id );
-
-      if ( it != idx.end() )
+      if ( err != error_code::success )
       {
+         promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
+         idx.erase( it );
+      }
+      else if ( msg->expiration )
+      {
+         // In the case where the message does in fact expire, we now know the approximate
+         // time the message has been sent to AMQP server and we should update the request to
+         // reflect it. Now is a good time to set the policy timer.
+         auto message_expiration = std::chrono::system_clock::now() + timeout;
+
          idx.modify( it, [&]( request &r ) { r.expiration = message_expiration; } );
 
          if ( _policy_timer.expiry() > message_expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
