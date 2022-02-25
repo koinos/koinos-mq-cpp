@@ -437,7 +437,8 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
             LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
 
-            // Adjust our message for another attempt
+            // We cannot and should not reuse an old messages correlation ID. We generate a new correlation ID
+            // and apply the exponential backoff logic to the message expiration.
             auto old_correlation_id = req_node.value().msg->correlation_id.value();
 
             req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
@@ -478,7 +479,10 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
       }
 
       {
+         // Now that all expired messages have been processed we must reset the the policy timer
+         // to come back and handle the next expiration.
          std::lock_guard< std::mutex > guard( _requests_mutex );
+
          auto& idx = boost::multi_index::get< by_expiration >( _requests );
 
          auto it = std::begin( idx );
@@ -532,6 +536,10 @@ std::shared_future< std::string > client_impl::rpc(
    std::shared_future< std::string > fut = promise->get_future();
 
    request r;
+   // Note that we purposefully set max expiration here regardless of timeout.
+   // When considering the possibility that publish falls in to a retry loop.
+   // We do not actually know when the message expiration time is until the
+   // message is sent successfully.
    r.expiration = std::chrono::time_point< std::chrono::system_clock >::max();
    r.policy     = policy;
    r.response   = promise;
@@ -539,6 +547,10 @@ std::shared_future< std::string > client_impl::rpc(
 
    request_set::iterator iter;
    bool success = false;
+
+   // We must ensure that the request exists in the request set prior to publication
+   // otherwise it is possible for the response to arrive before the insertion has
+   // been completed.
    {
       std::lock_guard< std::mutex > guard( _requests_mutex );
       std::tie( iter, success ) = _requests.insert( std::move( r ) );
@@ -553,19 +565,22 @@ std::shared_future< std::string > client_impl::rpc(
       _requests.erase( iter );
       promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
    }
-   else
+   else if ( msg->expiration )
    {
-      auto message_expiration = std::chrono::system_clock::now() + timeout;
+      // In the case where the message does in fact expire, we now know the approximate
+      // time the message has been sent to AMQP server and we should update the request to
+      // reflect it. Now is a good time to set the policy timer.
 
       std::lock_guard< std::mutex > guard( _requests_mutex );
+
+      auto message_expiration = std::chrono::system_clock::now() + timeout;
 
       auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
       auto it = idx.find( *msg->correlation_id );
 
       if ( it != idx.end() )
       {
-         if ( msg->expiration )
-            idx.modify( it, [&]( request &r ) { r.expiration = message_expiration; } );
+         idx.modify( it, [&]( request &r ) { r.expiration = message_expiration; } );
 
          if ( _policy_timer.expiry() > message_expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
          {
