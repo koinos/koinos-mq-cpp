@@ -488,11 +488,8 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
          auto it = std::begin( idx );
          if ( it != idx.end() )
          {
-            if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
-            {
-               _policy_timer.expires_at( it->expiration );
-               _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
-            }
+            _policy_timer.expires_at( it->expiration );
+            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
          }
       }
    }
