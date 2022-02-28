@@ -437,7 +437,8 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             LOG(warning) << "No response to client request with correlation ID: " << req_node.value().msg->correlation_id.value() << ", within " << req_node.value().msg->expiration.value() << "ms";
             LOG(debug) << "Client applying exponential backoff for message: " << to_string( *req_node.value().msg );
 
-            // Adjust our message for another attempt
+            // We cannot and should not reuse an old messages correlation ID. We generate a new correlation ID
+            // and apply the exponential backoff logic to the message expiration.
             auto old_correlation_id = req_node.value().msg->correlation_id.value();
 
             req_node.value().msg->correlation_id = util::random_alphanumeric( _correlation_id_len );
@@ -447,10 +448,14 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             LOG(debug) << "Resending message from client (correlation ID: " << old_correlation_id << ") with new correlation ID: "
                << req_node.value().msg->correlation_id.value() << ", expiration: " << req_node.value().msg->expiration.value();
 
-            req_node.value().expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *req_node.value().msg->expiration );
+            req_node.value().expiration = std::chrono::time_point< std::chrono::system_clock >::max();
 
             auto promise = req_node.value().response;
+            auto correlation_id = *req_node.value().msg->correlation_id;
 
+            // We must ensure that the request exists in the request set prior to publication
+            // otherwise it is possible for the response to arrive before the insertion has
+            // been completed.
             const auto [ it, inserted ] = [&]() {
                std::lock_guard< std::mutex > guard( _requests_mutex );
                const auto res = _requests.insert( std::move( req_node ) );
@@ -461,11 +466,25 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
             {
                auto err = publish( *it->msg, it->policy, "client rpc republication" );
 
-               if ( err != error_code::success )
+               std::lock_guard< std::mutex > guard( _requests_mutex );
+
+               // We cannot assume the request still exists in the request set so we
+               // reacquire the iterator.
+               auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+               auto iter = idx.find( correlation_id );
+
+               if ( iter != idx.end() )
                {
-                  promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
-                  std::lock_guard< std::mutex > guard( _requests_mutex );
-                  _requests.erase( it );
+                  if ( err == error_code::success )
+                  {
+                     // Now that the message has been published we can calculate the message expiration.
+                     idx.modify( iter, [&]( request& r ) { r.expiration = std::chrono::system_clock::now() + std::chrono::milliseconds( *r.msg->expiration ); } );
+                  }
+                  else
+                  {
+                     promise->set_exception( std::make_exception_ptr( client_publish_error( "error resending rpc message" ) ) );
+                     idx.erase( iter );
+                  }
                }
             }
             else
@@ -478,18 +497,17 @@ void client_impl::policy_handler( const boost::system::error_code& ec )
       }
 
       {
+         // Now that all expired messages have been processed we must reset the the policy timer
+         // to come back and handle the next expiration if it exists.
          std::lock_guard< std::mutex > guard( _requests_mutex );
+
          auto& idx = boost::multi_index::get< by_expiration >( _requests );
 
          auto it = std::begin( idx );
          if ( it != idx.end() )
          {
-            if ( _policy_timer.expiry() > it->expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
-            {
-               _policy_timer.cancel();
-               _policy_timer.expires_at( it->expiration );
-               _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
-            }
+            _policy_timer.expires_at( it->expiration );
+            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
          }
       }
    }
@@ -532,32 +550,56 @@ std::shared_future< std::string > client_impl::rpc(
 
    std::shared_future< std::string > fut = promise->get_future();
 
+   request r;
+   // Note that we purposefully set max expiration here regardless of timeout.
+   // When considering the possibility that publish falls in to a retry loop.
+   // We do not actually know when the message expiration time is until the
+   // message is sent successfully.
+   r.expiration = std::chrono::time_point< std::chrono::system_clock >::max();
+   r.policy     = policy;
+   r.response   = promise;
+   r.msg        = msg;
+
+   // We must ensure that the request exists in the request set prior to publication
+   // otherwise it is possible for the response to arrive before the insertion has
+   // been completed.
+   {
+      std::lock_guard< std::mutex > guard( _requests_mutex );
+      const auto& [ iter, success ]= _requests.insert( std::move( r ) );
+      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
+   }
+
    auto err = publish( *msg, policy, "client rpc publication" );
 
-   if ( err != error_code::success )
-   {
-      promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
-   }
-   else
-   {
-      request r;
-      if ( msg->expiration )
-         r.expiration  = std::chrono::system_clock::now() + timeout;
-      else
-         r.expiration  = std::chrono::time_point< std::chrono::system_clock >::max();
-      r.policy         = policy;
-      r.response       = promise;
-      r.msg            = msg;
 
-      std::lock_guard< std::mutex > guard( _requests_mutex );
-      const auto& [ iter, success ] = _requests.insert( std::move( r ) );
-      KOINOS_ASSERT( success, client_request_insertion_error, "failed to insert request, possibly a correlation id collision" );
+   std::lock_guard< std::mutex > guard( _requests_mutex );
 
-      if ( _policy_timer.expiry() > std::chrono::system_clock::now() + timeout || _policy_timer.expiry() < std::chrono::system_clock::now() )
+   // We cannot assume the request still exists in the request set so we
+   // reacquire the iterator.
+   auto& idx = boost::multi_index::get< by_correlation_id >( _requests );
+   auto it = idx.find( *msg->correlation_id );
+
+   if ( it != idx.end() )
+   {
+      if ( err != error_code::success )
       {
-         _policy_timer.cancel();
-         _policy_timer.expires_after( timeout );
-         _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+         promise->set_exception( std::make_exception_ptr( client_publish_error( "error sending rpc message" ) ) );
+         idx.erase( it );
+      }
+      else if ( msg->expiration )
+      {
+         // In the case where the message does in fact expire, we now know the approximate
+         // time the message has been sent to AMQP server and we should update the request to
+         // reflect it. Now is a good time to set the policy timer.
+         auto message_expiration = std::chrono::system_clock::now() + timeout;
+
+         idx.modify( it, [&]( request &r ) { r.expiration = message_expiration; } );
+
+         if ( _policy_timer.expiry() > message_expiration || _policy_timer.expiry() < std::chrono::system_clock::now() )
+         {
+            _policy_timer.expires_after( timeout );
+            _policy_timer.async_wait( boost::bind( &client_impl::policy_handler, this, boost::asio::placeholders::error ) );
+         }
       }
    }
 
