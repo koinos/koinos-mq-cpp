@@ -278,7 +278,7 @@ error_code message_broker_impl::connect(
       code = connect_lockfree(
          std::string( cinfo.host ),
          uint16_t( cinfo.port ),
-         *cinfo.vhost ? std::string( cinfo.vhost ) : std::string( "/" ),
+         std::string( *cinfo.vhost ? cinfo.vhost : "/" ),
          std::string( cinfo.user ),
          std::string( cinfo.password )
       );
