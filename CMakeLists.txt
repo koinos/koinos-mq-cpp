@@ -16,7 +16,7 @@ include(FetchContent)
 FetchContent_Declare(
   koinos_cmake
   GIT_REPOSITORY https://github.com/koinos/koinos-cmake.git
-  GIT_TAG        f3d5dd68611a515837b2a038cc93365ad12e8c41
+  GIT_TAG        5b72b0805bb6770d1c1462bcdf9ff0e423a5dd2c
 )
 FetchContent_MakeAvailable(koinos_cmake)
 
@@ -49,5 +49,3 @@ koinos_add_package(koinos_log CONFIG REQUIRED)
 koinos_add_package(koinos_util CONFIG REQUIRED)
 
 add_subdirectory(src)
-
-koinos_install(TARGETS mq)
