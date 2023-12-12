@@ -7,18 +7,20 @@ cache:
 addons:
   apt:
     packages:
-      - python3
-      - python3-pip
-      - python3-setuptools
+      - clang
+      - clang-format
+      - llvm
+      - lcov
+      - ruby
     update: true
 
 jobs:
   include:
-#    - os: linux
-#      dist: jammy
-#      env:
-#        - RUN_TYPE=coverage
-#        - MATRIX_EVAL="CC=clang-11 && CXX=clang++-11"
+    - os: linux
+      dist: jammy
+      env:
+        - RUN_TYPE=static-analysis
+        - MATRIX_EVAL="CC=clang && CXX=clang++"
     - os: linux
       dist: jammy
       env:
@@ -28,7 +30,7 @@ jobs:
       dist: jammy
       env:
         - RUN_TYPE=test
-        - MATRIX_EVAL="CC=clang-11 && CXX=clang++-11"
+        - MATRIX_EVAL="CC=clang && CXX=clang++"
 
 before_install:
   - eval "${MATRIX_EVAL}"

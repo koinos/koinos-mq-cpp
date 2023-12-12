@@ -1,10 +1,10 @@
 # libkoinos_mq
 
 add_library(mq
-  client.cpp
-  message_broker.cpp
-  request_handler.cpp
-  retryer.cpp
+  koinos/mq/client.cpp
+  koinos/mq/message_broker.cpp
+  koinos/mq/request_handler.cpp
+  koinos/mq/retryer.cpp
 
   ${PROJECT_SOURCE_DIR}/include/koinos/mq/client.hpp
   ${PROJECT_SOURCE_DIR}/include/koinos/mq/exception.hpp
