@@ -23,4 +23,4 @@ KOINOS_DECLARE_DERIVED_EXCEPTION( request_handler_already_connected, mq_exceptio
 // Common
 KOINOS_DECLARE_DERIVED_EXCEPTION( mq_connection_failure, mq_exception );
 
-} // koinos::mq
+} // namespace koinos::mq
