@@ -43,14 +43,14 @@ install(
 # koinos_mq_client
 
 add_executable(koinos_mq_client koinos_mq_client.cpp)
-target_link_libraries(koinos_mq_client Koinos::mq Koinos::log Boost::program_options)
+target_link_libraries(koinos_mq_client Koinos::mq Koinos::log Koinos::proto Boost::program_options)
 
 koinos_add_format(TARGET koinos_mq_client)
 
 # koinos_test_driver
 
 add_executable(koinos_test_driver koinos_test_driver.cpp)
-target_link_libraries(koinos_test_driver Koinos::mq Koinos::log Boost::program_options)
+target_link_libraries(koinos_test_driver Koinos::mq Koinos::log Koinos::proto Boost::program_options)
 
 koinos_add_format(TARGET koinos_test_driver)
 
