@@ -17,17 +17,19 @@ add_library(mq
 target_link_libraries(
   mq
     PUBLIC
+      Boost::headers
+      Koinos::log
+      Koinos::proto
       Koinos::util
       Koinos::exception
-      rabbitmq::rabbitmq-static
-)
+    PRIVATE
+      rabbitmq::rabbitmq-static)
 
 target_include_directories(
   mq
     PUBLIC
       $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-      $<INSTALL_INTERFACE:include>
-)
+      $<INSTALL_INTERFACE:include>)
 
 koinos_add_format(TARGET mq)
 
@@ -37,20 +39,28 @@ install(
   DIRECTORY
     ${PROJECT_SOURCE_DIR}/include
   DESTINATION
-    ${CMAKE_INSTALL_PREFIX}
-)
+    ${CMAKE_INSTALL_PREFIX})
 
 # koinos_mq_client
 
 add_executable(koinos_mq_client koinos_mq_client.cpp)
-target_link_libraries(koinos_mq_client Koinos::mq Koinos::log Koinos::proto Boost::program_options)
+target_link_libraries(
+  koinos_mq_client
+    PRIVATE
+      Koinos::mq
+      Boost::program_options)
 
 koinos_add_format(TARGET koinos_mq_client)
 
 # koinos_test_driver
 
 add_executable(koinos_test_driver koinos_test_driver.cpp)
-target_link_libraries(koinos_test_driver Koinos::mq Koinos::log Koinos::proto Boost::program_options)
+
+target_link_libraries(
+  koinos_test_driver
+    PRIVATE
+      Koinos::mq
+      Boost::program_options)
 
 koinos_add_format(TARGET koinos_test_driver)
 
@@ -58,5 +68,4 @@ koinos_install(
   TARGETS
     mq
     koinos_mq_client
-    koinos_test_driver
-)
+    koinos_test_driver)
