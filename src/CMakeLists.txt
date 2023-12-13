@@ -33,8 +33,6 @@ target_include_directories(
 
 koinos_add_format(TARGET mq)
 
-add_library(Koinos::mq ALIAS mq)
-
 install(
   DIRECTORY
     ${PROJECT_SOURCE_DIR}/include
@@ -47,7 +45,7 @@ add_executable(koinos_mq_client koinos_mq_client.cpp)
 target_link_libraries(
   koinos_mq_client
     PRIVATE
-      Koinos::mq
+      mq
       Boost::program_options)
 
 koinos_add_format(TARGET koinos_mq_client)
@@ -59,7 +57,7 @@ add_executable(koinos_test_driver koinos_test_driver.cpp)
 target_link_libraries(
   koinos_test_driver
     PRIVATE
-      Koinos::mq
+      mq
       Boost::program_options)
 
 koinos_add_format(TARGET koinos_test_driver)
