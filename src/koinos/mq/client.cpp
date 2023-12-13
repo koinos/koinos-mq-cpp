@@ -9,7 +9,6 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/system_timer.hpp>
-#include <boost/bind.hpp>
 #include <boost/multi_index/mem_fun.hpp>
 #include <boost/multi_index/member.hpp>
 #include <boost/multi_index/ordered_index.hpp>

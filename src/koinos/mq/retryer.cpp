@@ -1,11 +1,8 @@
 #include <koinos/mq/retryer.hpp>
 
 #include <boost/asio.hpp>
-#include <boost/bind.hpp>
 #include <functional>
 #include <future>
-
-using namespace std::placeholders;
 
 namespace koinos::mq {
 
