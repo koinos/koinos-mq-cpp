@@ -5,6 +5,7 @@ cache:
 
 addons:
   apt:
+    update: true
     packages:
       - clang
       - clang-format
@@ -12,6 +13,8 @@ addons:
       - llvm-dev
       - lcov
       - ruby
+      - gcc-12
+      - g++-12
 
 jobs:
   include:
@@ -26,7 +29,7 @@ jobs:
       dist: jammy
       env:
         - RUN_TYPE=test
-        - MATRIX_EVAL="CC=gcc && CXX=g++"
+        - MATRIX_EVAL="CC=gcc-12 && CXX=g++-12"
     - name: "Clang Build"
       os: linux
       dist: jammy
