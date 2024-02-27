@@ -12,8 +12,6 @@ addons:
       - llvm-dev
       - lcov
       - ruby
-      - gcc
-      - g++
 
 jobs:
   include:
