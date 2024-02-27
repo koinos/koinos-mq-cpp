@@ -25,7 +25,7 @@ jobs:
         - CC=clang
         - CXX=clang++
       script:
-        - cmake -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON
+        - cmake -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON .
         - cmake --build . --config Debug --parallel 3
     - name: "GCC Build"
       os: linux
@@ -34,7 +34,7 @@ jobs:
         - CC=gcc-12
         - CXX=g++-12
       script:
-        - cmake -DCMAKE_BUILD_TYPE=Release
+        - cmake -DCMAKE_BUILD_TYPE=Release .
         - cmake --build . --config Release --parallel 3
     - name: "Clang Build"
       os: linux
@@ -43,7 +43,7 @@ jobs:
         - CC=clang
         - CXX=clang++
       script:
-        - cmake -DCMAKE_BUILD_TYPE=Release
+        - cmake -DCMAKE_BUILD_TYPE=Release .
         - cmake --build . --config Release --parallel 3
 
 notifications:
