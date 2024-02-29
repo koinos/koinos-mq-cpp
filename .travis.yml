@@ -16,35 +16,46 @@ addons:
       - gcc-12
       - g++-12
 
+env:
+  global:
+    - CMAKE_C_COMPILER_LAUNCHER=ccache
+    - CMAKE_CXX_COMPILER_LAUNCHER=ccache
+
 jobs:
   include:
     - name: "Static Analysis"
       os: linux
       dist: jammy
-      before_install:
+      env:
         - CC=clang
         - CXX=clang++
-      script:
+      before_script:
         - cmake -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON .
+      script:
         - cmake --build . --config Debug --parallel 3
+
     - name: "GCC Build"
       os: linux
       dist: jammy
-      before_install:
+      env:
         - CC=gcc-12
         - CXX=g++-12
-      script:
+      before_script:
         - cmake -DCMAKE_BUILD_TYPE=Release .
+      script:
         - cmake --build . --config Release --parallel 3
+
     - name: "Clang Build"
       os: linux
       dist: jammy
-      before_install:
+      env:
         - CC=clang
         - CXX=clang++
-      script:
+      before_script:
         - cmake -DCMAKE_BUILD_TYPE=Release .
+      script:
         - cmake --build . --config Release --parallel 3
+        - cmake --build . --config Release --parallel 3 --target format.check
 
 notifications:
   slack:
