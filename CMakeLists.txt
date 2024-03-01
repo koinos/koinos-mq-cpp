@@ -1,22 +1,13 @@
 
 cmake_minimum_required(VERSION 3.19.0)
 
-cmake_policy(SET CMP0074 NEW)
-cmake_policy(SET CMP0114 NEW)
-
-if(${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.24.0)
-  cmake_policy(SET CMP0135 NEW)
-endif()
-
-if(${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.27.0)
-  cmake_policy(SET CMP0144 NEW)
-endif()
+cmake_policy(VERSION 3.19.0...3.27.4)
 
 include(FetchContent)
 FetchContent_Declare(
   koinos_cmake
   GIT_REPOSITORY https://github.com/koinos/koinos-cmake.git
-  GIT_TAG        871ef93b0b7c0c9548467fc28c1c09e003ad262b)
+  GIT_TAG        897f11188f1761ddd810d77839417549e68465aa)
 FetchContent_MakeAvailable(koinos_cmake)
 
 include("${koinos_cmake_SOURCE_DIR}/Koinos.cmake")
