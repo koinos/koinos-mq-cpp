@@ -7,9 +7,10 @@ This library implements an MQ client and message handler for the Koinos Blockcha
 This project's structure follows the [Pitchfork](https://api.csswg.org/bikeshed/?force=1&url=https://raw.githubusercontent.com/vector-of-bool/pitchfork/develop/data/spec.bs) specification.
 
 ```
-├── build/   # An ephemeral directory for building the project. Not checked in, but excluded via .gitignore.
-├── include/ # Contains all public headers for the Koinos MQ.
-└── src/     # Contains all source code and private headers for Koinos MQ.
+├── build/    # An ephemeral directory for building the project. Not checked in, but excluded via .gitignore.
+├── examples/ # Contains all source code and private headers for Koinos MQ examples.
+├── include/  # Contains all public headers for the Koinos MQ.
+└── src/      # Contains all source code and private headers for Koinos MQ.
 ```
 
 ### Building
