@@ -2,7 +2,7 @@ if (NOT BUILD_EXAMPLES)
   return()
 endif()
 
-add_executable(koinos_test_driver koinos_test_driver.cpp)
+add_executable(koinos_test_driver koinos_broadcast_example.cpp)
 
 target_link_libraries(
   koinos_test_driver
