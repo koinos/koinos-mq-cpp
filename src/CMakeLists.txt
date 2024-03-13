@@ -50,20 +50,7 @@ target_link_libraries(
 
 koinos_add_format(TARGET koinos_mq_client)
 
-# koinos_test_driver
-
-add_executable(koinos_test_driver koinos_test_driver.cpp)
-
-target_link_libraries(
-  koinos_test_driver
-    PRIVATE
-      mq
-      Boost::program_options)
-
-koinos_add_format(TARGET koinos_test_driver)
-
 koinos_install(
   TARGETS
     mq
-    koinos_mq_client
-    koinos_test_driver)
+    koinos_mq_client)
