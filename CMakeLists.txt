@@ -7,13 +7,13 @@ include(FetchContent)
 FetchContent_Declare(
   koinos_cmake
   GIT_REPOSITORY https://github.com/koinos/koinos-cmake.git
-  GIT_TAG        9b6b87549948956bcfca5d1f54a405158bb44ae2)
+  GIT_TAG        v1.0.0)
 FetchContent_MakeAvailable(koinos_cmake)
 
 include("${koinos_cmake_SOURCE_DIR}/Koinos.cmake")
 
 project(koinos_mq
-  VERSION 1.0.2
+  VERSION 1.0.3
   DESCRIPTION "The Koinos MQ library"
   LANGUAGES CXX C)
 
