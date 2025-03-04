@@ -1,17 +1,13 @@
 #include <koinos/mq/message_broker.hpp>
 
-#include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
 #include <cstdio>
 #include <mutex>
 #include <string>
-#include <thread>
 
-#include <amqp.h>
-#include <amqp_framing.h>
-#include <amqp_tcp_socket.h>
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/framing.h>
+#include <rabbitmq-c/tcp_socket.h>
 
 #include <koinos/log.hpp>
 
