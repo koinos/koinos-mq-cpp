@@ -21,23 +21,18 @@ using namespace koinos;
 int main( int argc, char** argv )
 {
   program_options::options_description desc( "Koinos MQ Client options" );
-  desc.add_options()( HELP_OPTION ",h", "Print usage message" )(
-    AMQP_OPTION ",a",
-    program_options::value< std::string >()->default_value( "amqp://guest:guest@localhost:5672/" ),
-    "AMQP url" )( BROADCAST_OPTION ",b", program_options::value< bool >()->default_value( false ), "Broadcast mode" )(
-    CONTENT_TYPE_OPTION ",c",
-    program_options::value< std::string >()->default_value( "application/octet-stream" ),
-    "Content type of the message" )( ROUTING_KEY_OPTION ",r",
-                                     program_options::value< std::string >()->default_value( "" ),
-                                     "Routing key of the message" )(
-    TIMEOUT_OPTION ",t",
-    program_options::value< uint64_t >()->default_value( 1'000 ),
-    "Timeout of the message" )( PAYLOAD_OPTION ",p",
-                                program_options::value< std::string >()->default_value( "" ),
-                                "Payload of the message" )(
-    LOG_FILTER_OPTION ",l",
-    program_options::value< std::string >()->default_value( "info" ),
-    "Default log filter level" );
+
+  // clang-format off
+  desc.add_options()
+    ( HELP_OPTION ",h"        , "Print usage message" )
+    ( AMQP_OPTION ",a"        , program_options::value< std::string >()->default_value( "amqp://guest:guest@localhost:5672/" ), "AMQP url" )
+    ( BROADCAST_OPTION ",b"   , program_options::value< bool >()->default_value( false ), "Broadcast mode" )
+    ( CONTENT_TYPE_OPTION ",c", program_options::value< std::string >()->default_value( "application/octet-stream" ), "Content type of the message" )
+    ( ROUTING_KEY_OPTION ",r" , program_options::value< std::string >()->default_value( "" ), "Routing key of the message" )
+    ( TIMEOUT_OPTION ",t"     , program_options::value< uint64_t >()->default_value( 1'000 ), "Timeout of the message" )
+    ( PAYLOAD_OPTION ",p"     , program_options::value< std::string >()->default_value( "" ), "Payload of the message" )
+    ( LOG_FILTER_OPTION ",l"  , program_options::value< std::string >()->default_value( "info" ), "Default log filter level" );
+  // clang-format on
 
   program_options::variables_map vm;
   program_options::store( program_options::parse_command_line( argc, argv, desc ), vm );
